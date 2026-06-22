@@ -1,0 +1,96 @@
+{
+  "config": {
+    "abort": {
+      "already_configured": "Dienst ist bereits konfiguriert",
+      "reauth_successful": "Die erneute Authentifizierung war erfolgreich"
+    },
+    "error": {
+      "cannot_connect": "Verbindung fehlgeschlagen",
+      "invalid_auth": "Ung\u00fcltige Authentifizierung",
+      "unknown": "Unerwarteter Fehler"
+    },
+    "step": {
+      "reauth_confirm": {
+        "data": {
+          "api_key": "API-Schl\u00fcssel"
+        },
+        "data_description": {
+          "api_key": "Dein Groq-API-Schl\u00fcssel."
+        },
+        "description": "Eine erneute Authentifizierung ist erforderlich. Bitte gib deinen aktualisierten Groq-API-Schl\u00fcssel ein."
+      },
+      "user": {
+        "data": {
+          "api_key": "API-Schl\u00fcssel"
+        },
+        "data_description": {
+          "api_key": "Dein Groq-API-Schl\u00fcssel."
+        },
+        "description": "Richte Groq Cloud Conversation ein, indem du deinen Groq-API-Schl\u00fcssel angibst. Du kannst [hier]({instructions_url}) einen API-Schl\u00fcssel erstellen."
+      }
+    }
+  },
+  "config_subentries": {
+    "ai_task_data": {
+      "abort": {
+        "entry_not_loaded": "Es k\u00f6nnen keine Dinge hinzugef\u00fcgt werden, wenn die Konfiguration deaktiviert ist.",
+        "reconfigure_successful": "Die Neukonfiguration war erfolgreich"
+      },
+      "entry_type": "KI-Task",
+      "initiate_flow": {
+        "reconfigure": "KI-Task neu konfigurieren",
+        "user": "KI-Task hinzuf\u00fcgen"
+      },
+      "step": {
+        "advanced": {
+          "data": {
+            "chat_model": "Modell",
+            "max_tokens": "Maximalzahl Token in der Antwort",
+            "temperature": "Temperatur",
+            "top_p": "Top P"
+          },
+          "title": "Erweiterte Einstellungen"
+        },
+        "init": {
+          "data": {
+            "name": "Name",
+            "recommended": "Empfohlene Modelleinstellungen"
+          }
+        }
+      }
+    },
+    "conversation": {
+      "abort": {
+        "entry_not_loaded": "Es k\u00f6nnen keine Dinge hinzugef\u00fcgt werden, wenn die Konfiguration deaktiviert ist.",
+        "reconfigure_successful": "Die Neukonfiguration war erfolgreich"
+      },
+      "entry_type": "Konversationsagent",
+      "initiate_flow": {
+        "reconfigure": "Konversationsagent neu konfigurieren",
+        "user": "Konversationsagent hinzuf\u00fcgen"
+      },
+      "step": {
+        "advanced": {
+          "data": {
+            "chat_model": "Modell",
+            "max_tokens": "Maximalzahl Token in der Antwort",
+            "temperature": "Temperatur",
+            "top_p": "Top P"
+          },
+          "title": "Erweiterte Einstellungen"
+        },
+        "init": {
+          "data": {
+            "llm_hass_api": "Home Assistant steuern",
+            "name": "Name",
+            "prompt": "Anweisungen",
+            "recommended": "Empfohlene Modelleinstellungen"
+          },
+          "data_description": {
+            "prompt": "Gib an, wie das LLM antworten soll. Dies kann ein Template sein."
+          }
+        }
+      }
+    }
+  }
+}

@@ -142,8 +142,6 @@ def _convert_content_to_param(
 
         if content.content:
             role: Literal["user", "assistant", "system", "developer"] = content.role
-            if role == "system":
-                role = "developer"
             messages.append(
                 EasyInputMessageParam(
                     content=content.content,
@@ -259,9 +257,7 @@ class GroqCloudBaseLLMEntity(Entity):
     _attr_has_entity_name = True
     _attr_name: str | None = None
 
-    def __init__(
-        self, entry: GroqCloudConfigEntry, subentry: ConfigSubentry
-    ) -> None:
+    def __init__(self, entry: GroqCloudConfigEntry, subentry: ConfigSubentry) -> None:
         """Initialize the Groq Cloud base entity."""
         self.entry = entry
         self.subentry = subentry

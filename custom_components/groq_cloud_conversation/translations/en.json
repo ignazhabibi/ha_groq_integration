@@ -1,0 +1,96 @@
+{
+  "config": {
+    "abort": {
+      "already_configured": "Service is already configured",
+      "reauth_successful": "Re-authentication was successful"
+    },
+    "error": {
+      "cannot_connect": "Failed to connect",
+      "invalid_auth": "Invalid authentication",
+      "unknown": "Unexpected error"
+    },
+    "step": {
+      "reauth_confirm": {
+        "data": {
+          "api_key": "API key"
+        },
+        "data_description": {
+          "api_key": "Your Groq API key."
+        },
+        "description": "Reauthentication required. Please enter your updated Groq API key."
+      },
+      "user": {
+        "data": {
+          "api_key": "API key"
+        },
+        "data_description": {
+          "api_key": "Your Groq API key."
+        },
+        "description": "Set up Groq Cloud Conversation by providing your Groq API key. You can create an API key [here]({instructions_url})."
+      }
+    }
+  },
+  "config_subentries": {
+    "ai_task_data": {
+      "abort": {
+        "entry_not_loaded": "Cannot add things while the configuration is disabled.",
+        "reconfigure_successful": "Reconfiguration was successful"
+      },
+      "entry_type": "AI task",
+      "initiate_flow": {
+        "reconfigure": "Reconfigure AI task",
+        "user": "Add AI task"
+      },
+      "step": {
+        "advanced": {
+          "data": {
+            "chat_model": "Model",
+            "max_tokens": "Maximum tokens to return in response",
+            "temperature": "Temperature",
+            "top_p": "Top P"
+          },
+          "title": "Advanced settings"
+        },
+        "init": {
+          "data": {
+            "name": "Name",
+            "recommended": "Recommended model settings"
+          }
+        }
+      }
+    },
+    "conversation": {
+      "abort": {
+        "entry_not_loaded": "Cannot add things while the configuration is disabled.",
+        "reconfigure_successful": "Reconfiguration was successful"
+      },
+      "entry_type": "Conversation agent",
+      "initiate_flow": {
+        "reconfigure": "Reconfigure conversation agent",
+        "user": "Add conversation agent"
+      },
+      "step": {
+        "advanced": {
+          "data": {
+            "chat_model": "Model",
+            "max_tokens": "Maximum tokens to return in response",
+            "temperature": "Temperature",
+            "top_p": "Top P"
+          },
+          "title": "Advanced settings"
+        },
+        "init": {
+          "data": {
+            "llm_hass_api": "Control Home Assistant",
+            "name": "Name",
+            "prompt": "Instructions",
+            "recommended": "Recommended model settings"
+          },
+          "data_description": {
+            "prompt": "Instruct how the LLM should respond. This can be a template."
+          }
+        }
+      }
+    }
+  }
+}

@@ -232,7 +232,7 @@ def test_convert_content_to_responses_input() -> None:
     messages = _convert_content_to_param(content)
     message_dicts = cast("list[dict[str, Any]]", messages)
 
-    assert message_dicts[0]["role"] == "developer"
+    assert message_dicts[0]["role"] == "system"
     assert message_dicts[1]["role"] == "user"
     assert message_dicts[2]["type"] == "function_call"
     assert message_dicts[3]["type"] == "function_call_output"
@@ -291,8 +291,7 @@ async def test_handle_chat_log_runs_ha_tool_round_trip(
     second_request = client.responses.create.await_args_list[1].kwargs
     assert first_request["tools"][0]["name"] == "Echo"
     assert any(
-        message["type"] == "function_call_output"
-        and message["call_id"] == "call_1"
+        message["type"] == "function_call_output" and message["call_id"] == "call_1"
         for message in cast("ResponseInputParam", second_request["input"])
     )
     assert isinstance(chat_log.content[-1], conversation.AssistantContent)
