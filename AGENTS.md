@@ -6,12 +6,14 @@ This repository contains the `groq_cloud_conversation` custom integration for Ho
 
 - a Home Assistant Assist conversation agent,
 - an AI task entity for text and structured data generation,
-- an adapter between Home Assistant's LLM API/tool system and Groq's OpenAI-compatible Responses API.
+- an adapter between Home Assistant's LLM API/tool system and Groq's OpenAI-compatible Chat Completions API.
 
-Use the official Home Assistant `openai_conversation` integration as the nearest upstream design reference:
+Use Home Assistant's official LLM API docs as the behavioral contract. The official `openai_conversation` integration remains a useful lifecycle and Home Assistant integration reference, but Groq request/response transport should follow Groq's Chat Completions and tool-calling documentation:
 
 - https://github.com/home-assistant/core/tree/dev/homeassistant/components/openai_conversation
 - https://developers.home-assistant.io/docs/core/llm/
+- https://console.groq.com/docs/tool-use/local-tool-calling
+- https://console.groq.com/docs/structured-outputs
 
 ## Repository Layout
 
@@ -57,8 +59,9 @@ When changing only documentation, running the test suite is optional. For code c
   - selected `CONF_LLM_HASS_API` values,
   - configured `CONF_PROMPT`,
   - `user_input.extra_system_prompt`.
-- Pass Home Assistant LLM tools to Groq in the shape Groq's OpenAI-compatible Responses API expects.
-- Keep tool-call handling streaming-aware. Preserve `chat_log.async_add_delta_content_stream(...)` and convert assistant/tool result content back into Responses API input for follow-up iterations.
+- Pass Home Assistant LLM tools to Groq in the OpenAI-compatible Chat Completions `tools` shape.
+- Keep conversation and tool-call handling streaming-aware. Preserve `chat_log.async_add_delta_content_stream(...)` and convert assistant/tool result content back into Chat Completions messages for follow-up iterations.
+- Use non-streaming Chat Completions with `response_format: json_schema` for structured AI task output.
 - Do not broaden control behavior in code or prompts. If an Assist bug involves wrong entities or room targets, inspect trace/config/history/exposure evidence before assuming the model or STT is at fault.
 - Preserve structured-output behavior for AI tasks. If `task.structure` is set, return parsed JSON data or raise a clear `HomeAssistantError`.
 - Keep model defaults centralized in `const.py`.
@@ -104,7 +107,7 @@ These conventions are adapted from the linked project rules and apply to all Pyt
 Before finishing a code change:
 
 - Confirm the change still matches Home Assistant's current LLM API expectations.
-- Compare any conversation-agent lifecycle change with the official `openai_conversation` integration.
+- Compare conversation-agent lifecycle changes with the official `openai_conversation` integration, while keeping Groq API transport aligned with Groq Chat Completions.
 - Verify no secrets, API keys, or user-specific Home Assistant entity IDs are committed.
 - Run the relevant tests and linters, or state clearly why they were not run.
 - For Assist behavior fixes, validate the final Home Assistant conversation result, not only that a Groq request was made.

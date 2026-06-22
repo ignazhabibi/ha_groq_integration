@@ -1,19 +1,28 @@
 """Tests for the Groq Cloud Conversation config flow."""
 
 from collections.abc import Callable
-from unittest.mock import AsyncMock, patch
+from types import SimpleNamespace
+from typing import cast
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
 import openai
 import pytest
-from homeassistant.config_entries import SOURCE_REAUTH
-from homeassistant.const import CONF_API_KEY
+import voluptuous as vol
+from homeassistant.config_entries import SOURCE_REAUTH, ConfigEntryState
+from homeassistant.const import CONF_API_KEY, CONF_NAME
 from homeassistant.core import HomeAssistant
 from homeassistant.data_entry_flow import FlowResultType
+from homeassistant.helpers.selector import SelectSelector
+from openai.types import Model
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
-from custom_components.groq_cloud_conversation.config_flow import validate_input
+from custom_components.groq_cloud_conversation.config_flow import (
+    _model_selector_options,
+    validate_input,
+)
 from custom_components.groq_cloud_conversation.const import (
+    CONF_CHAT_MODEL,
     CONF_RECOMMENDED,
     DEFAULT_AI_TASK_NAME,
     DEFAULT_CONVERSATION_NAME,
@@ -32,6 +41,24 @@ def _connection_error() -> openai.APIConnectionError:
     """Return a reusable OpenAI connection error."""
     request = httpx.Request("GET", "https://api.groq.com/openai/v1/models")
     return openai.APIConnectionError(request=request)
+
+
+def _model(model_id: str) -> Model:
+    """Return an OpenAI model object for flow tests."""
+    return Model.model_construct(
+        id=model_id,
+        created=0,
+        object="model",
+        owned_by="groq",
+    )
+
+
+def _get_schema_field(schema: vol.Schema, field_name: str) -> SelectSelector:
+    """Return a validator from a Home Assistant flow schema."""
+    for key, validator in schema.schema.items():
+        if key.schema == field_name:
+            return cast("SelectSelector", validator)
+    raise AssertionError(f"Missing schema field: {field_name}")
 
 
 async def test_user_flow_creates_default_subentries(hass: HomeAssistant) -> None:
@@ -159,3 +186,96 @@ async def test_validate_input_uses_groq_base_url_and_timeout(
         "https://api.groq.com/openai/v1"
     )
     models.assert_awaited_once_with(timeout=10.0)
+
+
+def test_model_selector_options_label_and_filter_models() -> None:
+    """Test model options distinguish known groups and filter incompatible IDs."""
+    options = _model_selector_options(
+        [
+            "custom/live-chat-model",
+            "llama-3.3-70b-versatile",
+            "qwen/qwen3-32b",
+            "whisper-large-v3",
+        ]
+    )
+
+    assert [option["value"] for option in options] == [
+        "llama-3.3-70b-versatile",
+        "qwen/qwen3-32b",
+        "custom/live-chat-model",
+    ]
+    assert [option["label"] for option in options] == [
+        "Production - Llama 3.3 70B (llama-3.3-70b-versatile)",
+        "Preview - Qwen3-32B (qwen/qwen3-32b)",
+        "Available - custom/live-chat-model",
+    ]
+
+
+async def test_subentry_advanced_step_uses_live_model_dropdown(
+    hass: HomeAssistant,
+) -> None:
+    """Test advanced subentry options show live Groq models in a dropdown."""
+    client = MagicMock()
+    client.models.list = AsyncMock(
+        return_value=SimpleNamespace(
+            data=[
+                _model("custom/live-chat-model"),
+                _model("llama-3.1-8b-instant"),
+                _model("meta-llama/llama-4-scout-17b-16e-instruct"),
+                _model("whisper-large-v3"),
+            ]
+        )
+    )
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        data={CONF_API_KEY: "groq-key"},
+        state=ConfigEntryState.LOADED,
+        subentries_data=[],
+        title="Groq Cloud",
+    )
+    entry.runtime_data = client
+    entry.add_to_hass(hass)
+
+    result = await hass.config_entries.subentries.async_init(
+        (entry.entry_id, "conversation"),
+        context={"source": "user"},
+    )
+    assert result["type"] is FlowResultType.FORM
+    assert result["step_id"] == "init"
+
+    result = await hass.config_entries.subentries.async_configure(
+        result["flow_id"],
+        user_input={CONF_NAME: "Groq Conversation", CONF_RECOMMENDED: False},
+    )
+
+    assert result["type"] is FlowResultType.FORM
+    assert result["step_id"] == "advanced"
+    client.models.list.assert_awaited_once_with(timeout=10.0)
+
+    data_schema = result["data_schema"]
+    assert data_schema is not None
+    selector = _get_schema_field(data_schema, CONF_CHAT_MODEL)
+    assert selector.serialize()["selector"]["select"] == {
+        "options": [
+            {
+                "label": "Production - Llama 3.1 8B (llama-3.1-8b-instant)",
+                "value": "llama-3.1-8b-instant",
+            },
+            {
+                "label": (
+                    "Preview - Llama 4 Scout 17B 16E "
+                    "(meta-llama/llama-4-scout-17b-16e-instruct)"
+                ),
+                "value": "meta-llama/llama-4-scout-17b-16e-instruct",
+            },
+            {
+                "label": "Available - custom/live-chat-model",
+                "value": "custom/live-chat-model",
+            },
+        ],
+        "mode": "dropdown",
+        "sort": False,
+        "custom_value": False,
+        "multiple": False,
+    }
+    object.__setattr__(entry, "state", ConfigEntryState.NOT_LOADED)

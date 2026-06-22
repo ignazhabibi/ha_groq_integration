@@ -49,6 +49,9 @@
             "temperature": "Temperature",
             "top_p": "Top P"
           },
+          "data_description": {
+            "chat_model": "Available Groq Chat Completions models. Audio and guard models are not shown."
+          },
           "title": "Advanced settings"
         },
         "init": {
@@ -77,6 +80,9 @@
             "temperature": "Temperature",
             "top_p": "Top P"
           },
+          "data_description": {
+            "chat_model": "Available Groq Chat Completions models. Audio and guard models are not shown."
+          },
           "title": "Advanced settings"
         },
         "init": {
@@ -94,4 +100,3 @@
     }
   }
 }
-

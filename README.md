@@ -63,7 +63,10 @@ The default model is:
 meta-llama/llama-4-scout-17b-16e-instruct
 ```
 
-You can override the model in each conversation or AI task subentry.
+You can override the model in each conversation or AI task subentry. The
+advanced subentry options load available Groq Chat Completions models from the
+Groq Models API and show them in a dropdown. Known models are labeled as
+Production or Preview based on Groq's model documentation.
 
 ## Conversation Agent
 

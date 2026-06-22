@@ -2,7 +2,7 @@
 
 import logging
 from collections.abc import Mapping
-from typing import Any
+from typing import Any, cast
 
 import openai
 import voluptuous as vol
@@ -25,10 +25,12 @@ from homeassistant.helpers.selector import (
     SelectOptionDict,
     SelectSelector,
     SelectSelectorConfig,
+    SelectSelectorMode,
     TemplateSelector,
 )
 from homeassistant.helpers.typing import VolDictType
 
+from . import GroqCloudConfigEntry
 from .const import (
     CONF_CHAT_MODEL,
     CONF_MAX_TOKENS,
@@ -39,6 +41,9 @@ from .const import (
     DEFAULT_CONVERSATION_NAME,
     DOMAIN,
     GROQ_BASE_URL,
+    GROQ_PREVIEW_CHAT_MODELS,
+    GROQ_PRODUCTION_CHAT_MODELS,
+    GROQ_UNSUPPORTED_CHAT_MODEL_IDS,
     RECOMMENDED_AI_TASK_OPTIONS,
     RECOMMENDED_CHAT_MODEL,
     RECOMMENDED_CONVERSATION_OPTIONS,
@@ -50,6 +55,7 @@ from .const import (
 _LOGGER = logging.getLogger(__name__)
 
 STEP_USER_DATA_SCHEMA = vol.Schema({vol.Required(CONF_API_KEY): str})
+MODEL_FETCH_TIMEOUT = 10.0
 
 
 async def validate_input(hass: HomeAssistant, data: dict[str, str]) -> None:
@@ -59,7 +65,78 @@ async def validate_input(hass: HomeAssistant, data: dict[str, str]) -> None:
         base_url=GROQ_BASE_URL,
         http_client=get_async_client(hass),
     )
-    await client.models.list(timeout=10.0)
+    await client.models.list(timeout=MODEL_FETCH_TIMEOUT)
+
+
+def _known_chat_model_ids() -> tuple[str, ...]:
+    """Return the fallback Chat Completions model IDs in display order."""
+    return tuple(GROQ_PRODUCTION_CHAT_MODELS) + tuple(GROQ_PREVIEW_CHAT_MODELS)
+
+
+def _model_sort_key(model_id: str) -> tuple[int, int, str]:
+    """Return a stable sort key that keeps Production before Preview models."""
+    known_model_ids = _known_chat_model_ids()
+    if model_id in GROQ_PRODUCTION_CHAT_MODELS:
+        return (0, known_model_ids.index(model_id), model_id)
+    if model_id in GROQ_PREVIEW_CHAT_MODELS:
+        return (1, known_model_ids.index(model_id), model_id)
+    if model_id in GROQ_UNSUPPORTED_CHAT_MODEL_IDS:
+        return (3, len(known_model_ids), model_id)
+    return (2, len(known_model_ids), model_id)
+
+
+def _model_label(model_id: str) -> str:
+    """Return the user-facing label for a Groq model selector option."""
+    if model_name := GROQ_PRODUCTION_CHAT_MODELS.get(model_id):
+        return f"Production - {model_name} ({model_id})"
+    if model_name := GROQ_PREVIEW_CHAT_MODELS.get(model_id):
+        return f"Preview - {model_name} ({model_id})"
+    if model_id in GROQ_UNSUPPORTED_CHAT_MODEL_IDS:
+        return f"Unsupported for chat - {model_id}"
+    return f"Available - {model_id}"
+
+
+def _model_selector_options(
+    model_ids: list[str],
+    selected_model: str | None = None,
+) -> list[SelectOptionDict]:
+    """Build selector options for Groq Chat Completions models."""
+    available_model_ids = {
+        model_id
+        for model_id in model_ids
+        if model_id and model_id not in GROQ_UNSUPPORTED_CHAT_MODEL_IDS
+    }
+    if selected_model:
+        available_model_ids.add(selected_model)
+
+    return [
+        SelectOptionDict(label=_model_label(model_id), value=model_id)
+        for model_id in sorted(available_model_ids, key=_model_sort_key)
+    ]
+
+
+async def _async_get_model_selector_options(
+    entry: GroqCloudConfigEntry,
+    selected_model: str | None = None,
+) -> list[SelectOptionDict]:
+    """Fetch the live Groq model list and return dropdown options."""
+    try:
+        models = await entry.runtime_data.models.list(timeout=MODEL_FETCH_TIMEOUT)
+    except openai.OpenAIError:
+        _LOGGER.warning(
+            "Could not fetch Groq models; using documented fallback models",
+            exc_info=True,
+        )
+        return _model_selector_options(list(_known_chat_model_ids()), selected_model)
+
+    model_options = _model_selector_options(
+        [model.id for model in models.data],
+        selected_model,
+    )
+    if model_options:
+        return model_options
+
+    return _model_selector_options(list(_known_chat_model_ids()), selected_model)
 
 
 class GroqCloudConfigFlow(ConfigFlow, domain=DOMAIN):
@@ -270,8 +347,20 @@ class GroqCloudSubentryFlowHandler(ConfigSubentryFlow):
     ) -> SubentryFlowResult:
         """Manage advanced Groq model settings."""
         options = self.options
+        model_options = await _async_get_model_selector_options(
+            cast("GroqCloudConfigEntry", self._get_entry()),
+            options.get(CONF_CHAT_MODEL, RECOMMENDED_CHAT_MODEL),
+        )
         step_schema: VolDictType = {
-            vol.Optional(CONF_CHAT_MODEL, default=RECOMMENDED_CHAT_MODEL): str,
+            vol.Optional(
+                CONF_CHAT_MODEL,
+                default=options.get(CONF_CHAT_MODEL, RECOMMENDED_CHAT_MODEL),
+            ): SelectSelector(
+                SelectSelectorConfig(
+                    options=model_options,
+                    mode=SelectSelectorMode.DROPDOWN,
+                )
+            ),
             vol.Optional(CONF_MAX_TOKENS, default=RECOMMENDED_MAX_TOKENS): int,
             vol.Optional(CONF_TEMPERATURE, default=RECOMMENDED_TEMPERATURE): (
                 NumberSelector(NumberSelectorConfig(min=0, max=2, step=0.05))

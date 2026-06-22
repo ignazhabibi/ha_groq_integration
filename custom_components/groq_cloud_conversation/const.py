@@ -1,6 +1,7 @@
 """Constants for the Groq Cloud Conversation integration."""
 
 import logging
+from collections.abc import Mapping
 from typing import Final
 
 from homeassistant.const import CONF_LLM_HASS_API, CONF_PROMPT
@@ -26,6 +27,31 @@ RECOMMENDED_MAX_TOKENS: Final = 1024
 RECOMMENDED_TEMPERATURE: Final = 0.7
 RECOMMENDED_TOP_P: Final = 1.0
 
+GROQ_PRODUCTION_CHAT_MODELS: Final[Mapping[str, str]] = {
+    "llama-3.1-8b-instant": "Llama 3.1 8B",
+    "llama-3.3-70b-versatile": "Llama 3.3 70B",
+    "openai/gpt-oss-120b": "OpenAI GPT-OSS 120B",
+    "openai/gpt-oss-20b": "OpenAI GPT-OSS 20B",
+    "groq/compound": "Groq Compound",
+    "groq/compound-mini": "Groq Compound Mini",
+}
+GROQ_PREVIEW_CHAT_MODELS: Final[Mapping[str, str]] = {
+    "meta-llama/llama-4-scout-17b-16e-instruct": "Llama 4 Scout 17B 16E",
+    "qwen/qwen3-32b": "Qwen3-32B",
+    "qwen/qwen3.6-27b": "Qwen/Qwen3.6-27B",
+}
+GROQ_UNSUPPORTED_CHAT_MODEL_IDS: Final[frozenset[str]] = frozenset(
+    {
+        "canopylabs/orpheus-arabic-saudi",
+        "canopylabs/orpheus-v1-english",
+        "meta-llama/llama-prompt-guard-2-22m",
+        "meta-llama/llama-prompt-guard-2-86m",
+        "openai/gpt-oss-safeguard-20b",
+        "whisper-large-v3",
+        "whisper-large-v3-turbo",
+    }
+)
+
 RECOMMENDED_AI_TASK_OPTIONS: Final = {
     CONF_RECOMMENDED: True,
 }
@@ -35,4 +61,3 @@ RECOMMENDED_CONVERSATION_OPTIONS: Final = {
     CONF_PROMPT: llm.DEFAULT_INSTRUCTIONS_PROMPT,
     CONF_RECOMMENDED: True,
 }
-
