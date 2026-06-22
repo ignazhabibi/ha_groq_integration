@@ -1,10 +1,13 @@
 """Tests for the shared Groq Cloud LLM entity adapter."""
 
 from collections.abc import AsyncIterator
+from http import HTTPStatus
 from types import MappingProxyType
 from typing import Any, TypeVar, cast
 from unittest.mock import AsyncMock, MagicMock
 
+import httpx
+import openai
 import pytest
 import voluptuous as vol
 from homeassistant.components import conversation
@@ -236,6 +239,34 @@ def _make_chat_log(hass: HomeAssistant) -> conversation.ChatLog:
     return chat_log
 
 
+def _make_openai_response(status_code: HTTPStatus) -> httpx.Response:
+    """Create an HTTPX response for OpenAI status errors."""
+    return httpx.Response(
+        status_code,
+        request=httpx.Request(
+            "POST",
+            "https://api.groq.com/openai/v1/chat/completions",
+        ),
+    )
+
+
+async def _handle_chat_log_for_error_case(
+    entity: DummyLLMEntity,
+    chat_log: conversation.ChatLog,
+    is_structured: bool,
+) -> None:
+    """Handle a chat log through the requested Groq response path."""
+    if is_structured:
+        await entity._async_handle_chat_log(
+            chat_log,
+            structure=vol.Schema({vol.Required("value"): str}),
+            structure_name="Extract data",
+        )
+        return
+
+    await entity._async_handle_chat_log(chat_log)
+
+
 def test_convert_content_to_chat_completion_input() -> None:
     """Test Home Assistant chat content is converted to Chat Completions input."""
     tool_input = llm.ToolInput(
@@ -391,3 +422,52 @@ async def test_handle_chat_log_enforces_tool_iteration_cap(
         await entity._async_handle_chat_log(chat_log, max_iterations=2)
 
     assert client.chat.completions.create.await_count == 2
+
+
+@pytest.mark.parametrize("is_structured", [False, True])
+@pytest.mark.parametrize(
+    "error_case",
+    [
+        (
+            openai.RateLimitError(
+                "Rate limited",
+                response=_make_openai_response(HTTPStatus.TOO_MANY_REQUESTS),
+                body=None,
+            ),
+            "Rate limited or insufficient funds",
+            False,
+        ),
+        (
+            openai.AuthenticationError(
+                "Invalid API key",
+                response=_make_openai_response(HTTPStatus.UNAUTHORIZED),
+                body=None,
+            ),
+            "Authentication error with Groq",
+            True,
+        ),
+    ],
+)
+async def test_handle_chat_log_maps_groq_status_errors(
+    hass: HomeAssistant,
+    monkeypatch: pytest.MonkeyPatch,
+    is_structured: bool,
+    error_case: tuple[openai.APIStatusError, str, bool],
+) -> None:
+    """Test Groq status errors are exposed as Home Assistant errors."""
+    exception, message, should_start_reauth = error_case
+    client = MagicMock()
+    client.chat.completions.create = AsyncMock(side_effect=exception)
+    entity = _make_entity(client, _make_subentry())
+    entity.hass = hass
+    chat_log = _make_chat_log(hass)
+    start_reauth = MagicMock()
+    monkeypatch.setattr(entity.entry, "async_start_reauth", start_reauth)
+
+    with pytest.raises(HomeAssistantError, match=message):
+        await _handle_chat_log_for_error_case(entity, chat_log, is_structured)
+
+    if should_start_reauth:
+        start_reauth.assert_called_once_with(hass)
+    else:
+        start_reauth.assert_not_called()
