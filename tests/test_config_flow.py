@@ -24,9 +24,12 @@ from custom_components.groq_cloud_conversation.config_flow import (
 from custom_components.groq_cloud_conversation.const import (
     CONF_CHAT_MODEL,
     CONF_RECOMMENDED,
+    CONF_STT_MODEL,
     DEFAULT_AI_TASK_NAME,
     DEFAULT_CONVERSATION_NAME,
+    DEFAULT_STT_NAME,
     DOMAIN,
+    RECOMMENDED_STT_MODEL,
 )
 
 
@@ -82,10 +85,12 @@ async def test_user_flow_creates_default_subentries(hass: HomeAssistant) -> None
     assert {subentry.subentry_type for subentry in subentries} == {
         "ai_task_data",
         "conversation",
+        "stt",
     }
     assert {subentry.title for subentry in subentries} == {
         DEFAULT_AI_TASK_NAME,
         DEFAULT_CONVERSATION_NAME,
+        DEFAULT_STT_NAME,
     }
     assert all(subentry.data[CONF_RECOMMENDED] for subentry in subentries)
 
@@ -278,4 +283,89 @@ async def test_subentry_advanced_step_uses_live_model_dropdown(
         "custom_value": False,
         "multiple": False,
     }
+    object.__setattr__(entry, "state", ConfigEntryState.NOT_LOADED)
+
+
+async def test_stt_subentry_advanced_step_uses_whisper_model_dropdown(
+    hass: HomeAssistant,
+) -> None:
+    """Test advanced STT options show the documented Groq Whisper models."""
+    client = MagicMock()
+    client.models.list = AsyncMock()
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        data={CONF_API_KEY: "groq-key"},
+        state=ConfigEntryState.LOADED,
+        subentries_data=[],
+        title="Groq Cloud",
+    )
+    entry.runtime_data = client
+    entry.add_to_hass(hass)
+
+    result = await hass.config_entries.subentries.async_init(
+        (entry.entry_id, "stt"),
+        context={"source": "user"},
+    )
+    assert result["type"] is FlowResultType.FORM
+    assert result["step_id"] == "init"
+
+    result = await hass.config_entries.subentries.async_configure(
+        result["flow_id"],
+        user_input={CONF_NAME: "Groq STT", CONF_RECOMMENDED: False},
+    )
+
+    assert result["type"] is FlowResultType.FORM
+    assert result["step_id"] == "advanced"
+    client.models.list.assert_not_awaited()
+
+    data_schema = result["data_schema"]
+    assert data_schema is not None
+    selector = _get_schema_field(data_schema, CONF_STT_MODEL)
+    assert selector.serialize()["selector"]["select"] == {
+        "options": [
+            {
+                "label": "Whisper Large v3 Turbo (whisper-large-v3-turbo)",
+                "value": RECOMMENDED_STT_MODEL,
+            },
+            {
+                "label": "Whisper Large v3 (whisper-large-v3)",
+                "value": "whisper-large-v3",
+            },
+        ],
+        "mode": "dropdown",
+        "sort": False,
+        "custom_value": False,
+        "multiple": False,
+    }
+    object.__setattr__(entry, "state", ConfigEntryState.NOT_LOADED)
+
+
+async def test_stt_subentry_recommended_step_creates_entry(
+    hass: HomeAssistant,
+) -> None:
+    """Test the STT subentry flow can create a recommended subentry."""
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        data={CONF_API_KEY: "groq-key"},
+        state=ConfigEntryState.LOADED,
+        subentries_data=[],
+        title="Groq Cloud",
+    )
+    entry.runtime_data = MagicMock()
+    entry.add_to_hass(hass)
+
+    result = await hass.config_entries.subentries.async_init(
+        (entry.entry_id, "stt"),
+        context={"source": "user"},
+    )
+    assert result["type"] is FlowResultType.FORM
+
+    result = await hass.config_entries.subentries.async_configure(
+        result["flow_id"],
+        user_input={CONF_NAME: "Groq STT", CONF_RECOMMENDED: True},
+    )
+
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    assert result["title"] == "Groq STT"
+    assert result["data"] == {CONF_RECOMMENDED: True}
     object.__setattr__(entry, "state", ConfigEntryState.NOT_LOADED)

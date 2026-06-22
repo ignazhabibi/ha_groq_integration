@@ -1,7 +1,7 @@
 # Groq Cloud Conversation
 
 Custom Home Assistant integration for using the Groq Cloud API as a conversation
-agent and AI task provider.
+agent, AI task provider, and speech-to-text provider.
 
 The integration follows Home Assistant's LLM API patterns and uses Groq's
 OpenAI-compatible API endpoint.
@@ -10,6 +10,7 @@ OpenAI-compatible API endpoint.
 
 - Conversation agent for Home Assistant Assist.
 - AI task entity for text and structured data generation.
+- Speech-to-text entity for Groq Whisper transcription.
 - Home Assistant LLM tool support through the Assist API.
 - Groq Cloud access through the OpenAI-compatible API endpoint.
 - Streaming response handling for conversation output and tool calls.
@@ -51,9 +52,10 @@ After copying, restart Home Assistant.
 The initial setup creates:
 
 - one conversation subentry for Home Assistant Assist,
-- one AI task subentry for text and structured data generation.
+- one AI task subentry for text and structured data generation,
+- one speech-to-text subentry for Assist pipeline transcription.
 
-Both subentries can be reconfigured from the integration options.
+All subentries can be reconfigured from the integration options.
 
 ## Default Model
 
@@ -67,6 +69,15 @@ You can override the model in each conversation or AI task subentry. The
 advanced subentry options load available Groq Chat Completions models from the
 Groq Models API and show them in a dropdown. Known models are labeled as
 Production or Preview based on Groq's model documentation.
+
+The default speech-to-text model is:
+
+```text
+whisper-large-v3-turbo
+```
+
+The speech-to-text subentry also supports `whisper-large-v3` from its advanced
+options.
 
 ## Conversation Agent
 
@@ -83,6 +94,12 @@ subentry options.
 The AI task entity supports regular text generation and structured data
 generation. Structured tasks use Home Assistant's schema information and return
 parsed JSON data.
+
+## Speech-to-Text
+
+The speech-to-text entity can be selected as an Assist pipeline STT provider.
+It sends Home Assistant audio streams to Groq's OpenAI-compatible transcription
+endpoint and returns the transcribed text to Assist.
 
 ## Development
 

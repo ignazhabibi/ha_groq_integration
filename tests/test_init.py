@@ -82,10 +82,13 @@ async def test_setup_entry_maps_validation_errors(
     client = MagicMock()
     client.models.list = AsyncMock(side_effect=setup_error)
 
-    with patch(
-        "custom_components.groq_cloud_conversation.openai.AsyncOpenAI",
-        return_value=client,
-    ), pytest.raises(expected_exception):
+    with (
+        patch(
+            "custom_components.groq_cloud_conversation.openai.AsyncOpenAI",
+            return_value=client,
+        ),
+        pytest.raises(expected_exception),
+    ):
         await async_setup_entry(hass, entry)
 
 
@@ -119,6 +122,6 @@ async def test_options_update_reloads_entry(hass: HomeAssistant) -> None:
     reload_entry.assert_awaited_once_with(entry.entry_id)
 
 
-def test_platforms_are_v1_scope() -> None:
-    """Test v1 forwards only conversation and AI task platforms."""
-    assert PLATFORMS == (Platform.AI_TASK, Platform.CONVERSATION)
+def test_platforms_include_stt() -> None:
+    """Test setup forwards all supported platforms."""
+    assert PLATFORMS == (Platform.AI_TASK, Platform.CONVERSATION, Platform.STT)

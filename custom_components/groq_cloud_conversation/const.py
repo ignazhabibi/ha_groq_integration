@@ -15,15 +15,18 @@ GROQ_BASE_URL: Final = "https://api.groq.com/openai/v1"
 DEFAULT_AI_TASK_NAME: Final = "Groq Cloud AI Task"
 DEFAULT_CONVERSATION_NAME: Final = "Groq Cloud Conversation"
 DEFAULT_NAME: Final = "Groq Cloud Conversation"
+DEFAULT_STT_NAME: Final = "Groq Cloud STT"
 
 CONF_CHAT_MODEL: Final = "chat_model"
 CONF_MAX_TOKENS: Final = "max_tokens"
 CONF_RECOMMENDED: Final = "recommended"
+CONF_STT_MODEL: Final = "stt_model"
 CONF_TEMPERATURE: Final = "temperature"
 CONF_TOP_P: Final = "top_p"
 
 RECOMMENDED_CHAT_MODEL: Final = "meta-llama/llama-4-scout-17b-16e-instruct"
 RECOMMENDED_MAX_TOKENS: Final = 1024
+RECOMMENDED_STT_MODEL: Final = "whisper-large-v3-turbo"
 RECOMMENDED_TEMPERATURE: Final = 0.7
 RECOMMENDED_TOP_P: Final = 1.0
 
@@ -51,6 +54,13 @@ GROQ_UNSUPPORTED_CHAT_MODEL_IDS: Final[frozenset[str]] = frozenset(
         "whisper-large-v3-turbo",
     }
 )
+GROQ_STT_MODELS: Final[Mapping[str, str]] = {
+    "whisper-large-v3-turbo": "Whisper Large v3 Turbo",
+    "whisper-large-v3": "Whisper Large v3",
+}
+DEFAULT_STT_PROMPT: Final = (
+    "The following conversation is a smart home user talking to Home Assistant."
+)
 
 RECOMMENDED_AI_TASK_OPTIONS: Final = {
     CONF_RECOMMENDED: True,
@@ -59,5 +69,9 @@ RECOMMENDED_AI_TASK_OPTIONS: Final = {
 RECOMMENDED_CONVERSATION_OPTIONS: Final = {
     CONF_LLM_HASS_API: [llm.LLM_API_ASSIST],
     CONF_PROMPT: llm.DEFAULT_INSTRUCTIONS_PROMPT,
+    CONF_RECOMMENDED: True,
+}
+
+RECOMMENDED_STT_OPTIONS: Final = {
     CONF_RECOMMENDED: True,
 }

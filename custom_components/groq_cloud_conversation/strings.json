@@ -97,6 +97,36 @@
           }
         }
       }
+    },
+    "stt": {
+      "abort": {
+        "entry_not_loaded": "Cannot add things while the configuration is disabled.",
+        "reconfigure_successful": "[%key:common::config_flow::abort::reconfigure_successful%]"
+      },
+      "entry_type": "Speech-to-text",
+      "initiate_flow": {
+        "reconfigure": "Reconfigure speech-to-text",
+        "user": "Add speech-to-text"
+      },
+      "step": {
+        "advanced": {
+          "data": {
+            "prompt": "[%key:common::config_flow::data::prompt%]",
+            "stt_model": "[%key:common::generic::model%]"
+          },
+          "data_description": {
+            "prompt": "Optional context to improve smart-home transcription.",
+            "stt_model": "Groq Whisper model used for audio transcription."
+          },
+          "title": "Advanced settings"
+        },
+        "init": {
+          "data": {
+            "name": "[%key:common::config_flow::data::name%]",
+            "recommended": "Recommended model settings"
+          }
+        }
+      }
     }
   }
 }

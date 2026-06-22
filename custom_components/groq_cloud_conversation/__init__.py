@@ -11,7 +11,11 @@ from homeassistant.helpers.typing import ConfigType
 
 from .const import DOMAIN, GROQ_BASE_URL
 
-PLATFORMS: tuple[Platform, ...] = (Platform.AI_TASK, Platform.CONVERSATION)
+PLATFORMS: tuple[Platform, ...] = (
+    Platform.AI_TASK,
+    Platform.CONVERSATION,
+    Platform.STT,
+)
 CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
 
 type GroqCloudConfigEntry = ConfigEntry[openai.AsyncClient]

@@ -35,19 +35,25 @@ from .const import (
     CONF_CHAT_MODEL,
     CONF_MAX_TOKENS,
     CONF_RECOMMENDED,
+    CONF_STT_MODEL,
     CONF_TEMPERATURE,
     CONF_TOP_P,
     DEFAULT_AI_TASK_NAME,
     DEFAULT_CONVERSATION_NAME,
+    DEFAULT_STT_NAME,
+    DEFAULT_STT_PROMPT,
     DOMAIN,
     GROQ_BASE_URL,
     GROQ_PREVIEW_CHAT_MODELS,
     GROQ_PRODUCTION_CHAT_MODELS,
+    GROQ_STT_MODELS,
     GROQ_UNSUPPORTED_CHAT_MODEL_IDS,
     RECOMMENDED_AI_TASK_OPTIONS,
     RECOMMENDED_CHAT_MODEL,
     RECOMMENDED_CONVERSATION_OPTIONS,
     RECOMMENDED_MAX_TOKENS,
+    RECOMMENDED_STT_MODEL,
+    RECOMMENDED_STT_OPTIONS,
     RECOMMENDED_TEMPERATURE,
     RECOMMENDED_TOP_P,
 )
@@ -112,6 +118,33 @@ def _model_selector_options(
     return [
         SelectOptionDict(label=_model_label(model_id), value=model_id)
         for model_id in sorted(available_model_ids, key=_model_sort_key)
+    ]
+
+
+def _stt_model_label(model_id: str) -> str:
+    """Return the user-facing label for a Groq STT model selector option."""
+    if model_name := GROQ_STT_MODELS.get(model_id):
+        return f"{model_name} ({model_id})"
+    return model_id
+
+
+def _stt_model_selector_options(
+    selected_model: str | None = None,
+) -> list[SelectOptionDict]:
+    """Build selector options for Groq speech-to-text models."""
+    model_ids = set(GROQ_STT_MODELS)
+    if selected_model:
+        model_ids.add(selected_model)
+
+    return [
+        SelectOptionDict(label=_stt_model_label(model_id), value=model_id)
+        for model_id in sorted(
+            model_ids,
+            key=lambda model_id: (
+                model_id != RECOMMENDED_STT_MODEL,
+                model_id,
+            ),
+        )
     ]
 
 
@@ -185,6 +218,12 @@ class GroqCloudConfigFlow(ConfigFlow, domain=DOMAIN):
                             "title": DEFAULT_AI_TASK_NAME,
                             "unique_id": None,
                         },
+                        {
+                            "data": RECOMMENDED_STT_OPTIONS,
+                            "subentry_type": "stt",
+                            "title": DEFAULT_STT_NAME,
+                            "unique_id": None,
+                        },
                     ],
                 )
 
@@ -230,6 +269,7 @@ class GroqCloudConfigFlow(ConfigFlow, domain=DOMAIN):
         return {
             "ai_task_data": GroqCloudSubentryFlowHandler,
             "conversation": GroqCloudSubentryFlowHandler,
+            "stt": GroqCloudSubentryFlowHandler,
         }
 
 
@@ -250,6 +290,8 @@ class GroqCloudSubentryFlowHandler(ConfigSubentryFlow):
         """Add a new subentry."""
         if self._subentry_type == "ai_task_data":
             self.options = RECOMMENDED_AI_TASK_OPTIONS.copy()
+        elif self._subentry_type == "stt":
+            self.options = RECOMMENDED_STT_OPTIONS.copy()
         else:
             self.options = RECOMMENDED_CONVERSATION_OPTIONS.copy()
         return await self.async_step_init()
@@ -274,11 +316,11 @@ class GroqCloudSubentryFlowHandler(ConfigSubentryFlow):
         step_schema: VolDictType = {}
 
         if self._is_new:
-            default_name = (
-                DEFAULT_AI_TASK_NAME
-                if self._subentry_type == "ai_task_data"
-                else DEFAULT_CONVERSATION_NAME
-            )
+            default_name = {
+                "ai_task_data": DEFAULT_AI_TASK_NAME,
+                "conversation": DEFAULT_CONVERSATION_NAME,
+                "stt": DEFAULT_STT_NAME,
+            }[self._subentry_type]
             step_schema[vol.Required(CONF_NAME, default=default_name)] = str
 
         if self._subentry_type == "conversation":
@@ -346,6 +388,9 @@ class GroqCloudSubentryFlowHandler(ConfigSubentryFlow):
         user_input: dict[str, Any] | None = None,
     ) -> SubentryFlowResult:
         """Manage advanced Groq model settings."""
+        if self._subentry_type == "stt":
+            return await self.async_step_stt_advanced(user_input)
+
         options = self.options
         model_options = await _async_get_model_selector_options(
             cast("GroqCloudConfigEntry", self._get_entry()),
@@ -368,6 +413,53 @@ class GroqCloudSubentryFlowHandler(ConfigSubentryFlow):
             vol.Optional(CONF_TOP_P, default=RECOMMENDED_TOP_P): NumberSelector(
                 NumberSelectorConfig(min=0, max=1, step=0.05),
             ),
+        }
+
+        if user_input is not None:
+            options.update(user_input)
+            if self._is_new:
+                return self.async_create_entry(
+                    title=options.pop(CONF_NAME),
+                    data=options,
+                )
+            return self.async_update_and_abort(
+                self._get_entry(),
+                self._get_reconfigure_subentry(),
+                data=options,
+            )
+
+        return self.async_show_form(
+            step_id="advanced",
+            data_schema=self.add_suggested_values_to_schema(
+                vol.Schema(step_schema),
+                options,
+            ),
+        )
+
+    async def async_step_stt_advanced(
+        self,
+        user_input: dict[str, Any] | None = None,
+    ) -> SubentryFlowResult:
+        """Manage advanced Groq speech-to-text settings."""
+        options = self.options
+        step_schema: VolDictType = {
+            vol.Optional(
+                CONF_STT_MODEL,
+                default=options.get(CONF_STT_MODEL, RECOMMENDED_STT_MODEL),
+            ): SelectSelector(
+                SelectSelectorConfig(
+                    options=_stt_model_selector_options(
+                        options.get(CONF_STT_MODEL, RECOMMENDED_STT_MODEL),
+                    ),
+                    mode=SelectSelectorMode.DROPDOWN,
+                )
+            ),
+            vol.Optional(
+                CONF_PROMPT,
+                description={
+                    "suggested_value": options.get(CONF_PROMPT, DEFAULT_STT_PROMPT),
+                },
+            ): TemplateSelector(),
         }
 
         if user_input is not None:
