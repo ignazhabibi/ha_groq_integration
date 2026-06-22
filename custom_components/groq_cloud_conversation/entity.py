@@ -15,6 +15,10 @@ from homeassistant.helpers.entity import Entity
 from homeassistant.helpers.json import json_dumps
 from homeassistant.util import slugify
 from openai._streaming import AsyncStream
+from openai.types.chat import ChatCompletionChunk, ChatCompletionMessageParam
+from openai.types.chat.chat_completion_message_tool_call_param import Function
+from openai.types.chat.chat_completion_tool_param import ChatCompletionToolParam
+from openai.types.chat.completion_create_params import CompletionCreateParamsStreaming
 from openai.types.responses import (
     EasyInputMessageParam,
     FunctionToolParam,
@@ -56,6 +60,19 @@ if TYPE_CHECKING:
 JsonSchema = dict[str, Any]
 
 MAX_TOOL_ITERATIONS = 10
+
+
+def _format_tool_parameters(
+    tool: llm.Tool, custom_serializer: Callable[[Any], Any] | None
+) -> JsonSchema:
+    """Format a Home Assistant tool parameter schema for Groq."""
+    unsupported_keys = {"allOf", "anyOf", "enum", "not", "oneOf"}
+    schema = convert(tool.parameters, custom_serializer=custom_serializer)
+    if unsupported_keys.intersection(schema):
+        schema = {
+            key: value for key, value in schema.items() if key not in unsupported_keys
+        }
+    return cast("JsonSchema", schema)
 
 
 def _adjust_schema(schema: JsonSchema) -> None:
@@ -107,18 +124,26 @@ def _format_tool(
     tool: llm.Tool, custom_serializer: Callable[[Any], Any] | None
 ) -> FunctionToolParam:
     """Format a Home Assistant LLM tool for the Responses API."""
-    unsupported_keys = {"allOf", "anyOf", "enum", "not", "oneOf"}
-    schema = convert(tool.parameters, custom_serializer=custom_serializer)
-    if unsupported_keys.intersection(schema):
-        schema = {
-            key: value for key, value in schema.items() if key not in unsupported_keys
-        }
-
     return FunctionToolParam(
         description=tool.description,
         name=tool.name,
-        parameters=schema,
+        parameters=_format_tool_parameters(tool, custom_serializer),
         strict=False,
+        type="function",
+    )
+
+
+def _format_chat_completion_tool(
+    tool: llm.Tool, custom_serializer: Callable[[Any], Any] | None
+) -> ChatCompletionToolParam:
+    """Format a Home Assistant LLM tool for Chat Completions."""
+    return ChatCompletionToolParam(
+        function={
+            "description": tool.description or "",
+            "name": tool.name,
+            "parameters": _format_tool_parameters(tool, custom_serializer),
+            "strict": False,
+        },
         type="function",
     )
 
@@ -160,6 +185,63 @@ def _convert_content_to_param(
                         type="function_call",
                     )
                 )
+
+    return messages
+
+
+def _convert_content_to_chat_completion_param(
+    chat_content: Iterable[conversation.Content],
+) -> list[ChatCompletionMessageParam]:
+    """Convert Home Assistant chat content to Chat Completions messages."""
+    messages: list[ChatCompletionMessageParam] = []
+
+    for content in chat_content:
+        if isinstance(content, conversation.ToolResultContent):
+            messages.append(
+                cast(
+                    "ChatCompletionMessageParam",
+                    {
+                        "content": json_dumps(content.tool_result),
+                        "role": "tool",
+                        "tool_call_id": content.tool_call_id,
+                    },
+                )
+            )
+            continue
+
+        if isinstance(content, conversation.AssistantContent) and content.tool_calls:
+            messages.append(
+                cast(
+                    "ChatCompletionMessageParam",
+                    {
+                        "content": content.content or None,
+                        "role": "assistant",
+                        "tool_calls": [
+                            {
+                                "function": Function(
+                                    arguments=json_dumps(tool_call.tool_args),
+                                    name=tool_call.tool_name,
+                                ),
+                                "id": tool_call.id,
+                                "type": "function",
+                            }
+                            for tool_call in content.tool_calls
+                        ],
+                    },
+                )
+            )
+            continue
+
+        if content.content:
+            messages.append(
+                cast(
+                    "ChatCompletionMessageParam",
+                    {
+                        "content": content.content,
+                        "role": content.role,
+                    },
+                )
+            )
 
     return messages
 
@@ -251,6 +333,73 @@ async def _transform_stream(
             raise HomeAssistantError(f"Groq response error: {event.message}")
 
 
+async def _transform_chat_completion_stream(
+    chat_log: conversation.ChatLog,
+    stream: AsyncStream[ChatCompletionChunk],
+) -> AsyncGenerator[
+    conversation.AssistantContentDeltaDict | conversation.ToolResultContentDeltaDict
+]:
+    """Transform a Chat Completions stream into Home Assistant chat deltas."""
+    tool_calls: dict[int, dict[str, str]] = {}
+    last_role: Literal["assistant"] | None = None
+
+    async for chunk in stream:
+        LOGGER.debug("Received Groq chat completion chunk: %s", chunk)
+
+        if chunk.usage is not None:
+            chat_log.async_trace(
+                {
+                    "stats": {
+                        "input_tokens": chunk.usage.prompt_tokens,
+                        "output_tokens": chunk.usage.completion_tokens,
+                    }
+                }
+            )
+
+        for choice in chunk.choices:
+            delta = choice.delta
+            if delta.role == "assistant" and last_role != "assistant":
+                yield {"role": "assistant"}
+                last_role = "assistant"
+
+            if delta.content:
+                if last_role != "assistant":
+                    yield {"role": "assistant"}
+                    last_role = "assistant"
+                yield {"content": delta.content}
+
+            if delta.tool_calls:
+                if last_role != "assistant":
+                    yield {"role": "assistant"}
+                    last_role = "assistant"
+                for tool_call_delta in delta.tool_calls:
+                    tool_call = tool_calls.setdefault(
+                        tool_call_delta.index,
+                        {"arguments": "", "id": "", "name": ""},
+                    )
+                    if tool_call_delta.id:
+                        tool_call["id"] = tool_call_delta.id
+                    if tool_call_delta.function is None:
+                        continue
+                    if tool_call_delta.function.name:
+                        tool_call["name"] = tool_call_delta.function.name
+                    if tool_call_delta.function.arguments:
+                        tool_call["arguments"] += tool_call_delta.function.arguments
+
+            if choice.finish_reason == "tool_calls" and tool_calls:
+                yield {
+                    "tool_calls": [
+                        llm.ToolInput(
+                            id=tool_call["id"],
+                            tool_args=json.loads(tool_call["arguments"] or "{}"),
+                            tool_name=tool_call["name"],
+                        )
+                        for _, tool_call in sorted(tool_calls.items())
+                    ]
+                }
+                tool_calls.clear()
+
+
 class GroqCloudBaseLLMEntity(Entity):
     """Base entity for Groq Cloud conversation and AI task entities."""
 
@@ -278,6 +427,13 @@ class GroqCloudBaseLLMEntity(Entity):
         max_iterations: int = MAX_TOOL_ITERATIONS,
     ) -> None:
         """Generate a Groq response for the given Home Assistant chat log."""
+        if chat_log.llm_api and chat_log.llm_api.tools and not structure:
+            await self._async_handle_chat_completion_chat_log(
+                chat_log,
+                max_iterations,
+            )
+            return
+
         options = self.subentry.data
         messages = _convert_content_to_param(chat_log.content)
 
@@ -320,6 +476,65 @@ class GroqCloudBaseLLMEntity(Entity):
                 )
                 messages.extend(
                     _convert_content_to_param(
+                        [content async for content in content_stream]
+                    )
+                )
+            except openai.AuthenticationError as err:
+                self.entry.async_start_reauth(self.hass)
+                raise HomeAssistantError("Authentication error with Groq") from err
+            except openai.RateLimitError as err:
+                LOGGER.error("Rate limited by Groq: %s", err)
+                raise HomeAssistantError("Rate limited or insufficient funds") from err
+            except openai.OpenAIError as err:
+                LOGGER.error("Error talking to Groq: %s", err)
+                raise HomeAssistantError("Error talking to Groq") from err
+
+            if not chat_log.unresponded_tool_results:
+                break
+        else:
+            raise HomeAssistantError("Groq tool call limit reached")
+
+    async def _async_handle_chat_completion_chat_log(
+        self,
+        chat_log: conversation.ChatLog,
+        max_iterations: int,
+    ) -> None:
+        """Generate a Groq response through Chat Completions for tool calls."""
+        llm_api = chat_log.llm_api
+        if llm_api is None:
+            raise HomeAssistantError("Home Assistant LLM API is not available")
+
+        options = self.subentry.data
+        messages = _convert_content_to_chat_completion_param(chat_log.content)
+        tools = [
+            _format_chat_completion_tool(tool, llm_api.custom_serializer)
+            for tool in llm_api.tools
+        ]
+
+        model_args = CompletionCreateParamsStreaming(
+            max_completion_tokens=options.get(CONF_MAX_TOKENS, RECOMMENDED_MAX_TOKENS),
+            messages=messages,
+            model=options.get(CONF_CHAT_MODEL, RECOMMENDED_CHAT_MODEL),
+            stream=True,
+            stream_options={"include_usage": True},
+            temperature=options.get(CONF_TEMPERATURE, RECOMMENDED_TEMPERATURE),
+            tool_choice="auto",
+            tools=tools,
+            top_p=options.get(CONF_TOP_P, RECOMMENDED_TOP_P),
+            user=chat_log.conversation_id,
+        )
+
+        client = self.entry.runtime_data
+
+        for _iteration in range(max_iterations):
+            try:
+                stream = await client.chat.completions.create(**model_args)
+                content_stream = chat_log.async_add_delta_content_stream(
+                    self.entity_id,
+                    _transform_chat_completion_stream(chat_log, stream),
+                )
+                messages.extend(
+                    _convert_content_to_chat_completion_param(
                         [content async for content in content_stream]
                     )
                 )

@@ -2,7 +2,7 @@
 
 from collections.abc import AsyncIterator
 from types import MappingProxyType
-from typing import Any, cast
+from typing import Any, TypeVar, cast
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -13,11 +13,17 @@ from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import llm
 from homeassistant.util.json import JsonObjectType
+from openai.types.chat import ChatCompletionChunk
+from openai.types.chat.chat_completion_chunk import (
+    Choice,
+    ChoiceDelta,
+    ChoiceDeltaToolCall,
+    ChoiceDeltaToolCallFunction,
+)
 from openai.types.responses import (
     ResponseFunctionCallArgumentsDeltaEvent,
     ResponseFunctionCallArgumentsDoneEvent,
     ResponseFunctionToolCall,
-    ResponseInputParam,
     ResponseOutputItemAddedEvent,
     ResponseOutputMessage,
     ResponseStreamEvent,
@@ -36,22 +42,25 @@ from custom_components.groq_cloud_conversation.const import (
 )
 from custom_components.groq_cloud_conversation.entity import (
     GroqCloudBaseLLMEntity,
+    _convert_content_to_chat_completion_param,
     _convert_content_to_param,
 )
 
+StreamEventT = TypeVar("StreamEventT")
 
-class FakeStream:
-    """Async iterator for fake Responses API streaming events."""
 
-    def __init__(self, events: list[ResponseStreamEvent]) -> None:
+class FakeStream[StreamEventT]:
+    """Async iterator for fake streaming events."""
+
+    def __init__(self, events: list[StreamEventT]) -> None:
         """Initialize the fake stream."""
         self._events = iter(events)
 
-    def __aiter__(self) -> AsyncIterator[ResponseStreamEvent]:
+    def __aiter__(self) -> AsyncIterator[StreamEventT]:
         """Return the stream iterator."""
         return self
 
-    async def __anext__(self) -> ResponseStreamEvent:
+    async def __anext__(self) -> StreamEventT:
         """Return the next fake stream event."""
         try:
             return next(self._events)
@@ -174,6 +183,84 @@ def _tool_call_events(
     ]
 
 
+def _chat_message_chunks(text: str) -> list[ChatCompletionChunk]:
+    """Return fake Chat Completions chunks for an assistant text response."""
+    return [
+        ChatCompletionChunk.model_construct(
+            id="chatcmpl_1",
+            choices=[
+                Choice.model_construct(
+                    delta=ChoiceDelta.model_construct(
+                        content=text,
+                        role="assistant",
+                    ),
+                    finish_reason="stop",
+                    index=0,
+                )
+            ],
+            created=0,
+            model=RECOMMENDED_CHAT_MODEL,
+            object="chat.completion.chunk",
+        )
+    ]
+
+
+def _chat_tool_call_chunks(
+    arguments: str = '{"value": "lamp"}',
+) -> list[ChatCompletionChunk]:
+    """Return fake Chat Completions chunks for a function tool call."""
+    return [
+        ChatCompletionChunk.model_construct(
+            id="chatcmpl_1",
+            choices=[
+                Choice.model_construct(
+                    delta=ChoiceDelta.model_construct(
+                        role="assistant",
+                        tool_calls=[
+                            ChoiceDeltaToolCall.model_construct(
+                                function=ChoiceDeltaToolCallFunction.model_construct(
+                                    arguments="",
+                                    name="Echo",
+                                ),
+                                id="call_1",
+                                index=0,
+                                type="function",
+                            )
+                        ],
+                    ),
+                    finish_reason=None,
+                    index=0,
+                )
+            ],
+            created=0,
+            model=RECOMMENDED_CHAT_MODEL,
+            object="chat.completion.chunk",
+        ),
+        ChatCompletionChunk.model_construct(
+            id="chatcmpl_1",
+            choices=[
+                Choice.model_construct(
+                    delta=ChoiceDelta.model_construct(
+                        tool_calls=[
+                            ChoiceDeltaToolCall.model_construct(
+                                function=ChoiceDeltaToolCallFunction.model_construct(
+                                    arguments=arguments,
+                                ),
+                                index=0,
+                            )
+                        ],
+                    ),
+                    finish_reason="tool_calls",
+                    index=0,
+                )
+            ],
+            created=0,
+            model=RECOMMENDED_CHAT_MODEL,
+            object="chat.completion.chunk",
+        ),
+    ]
+
+
 def _make_subentry(
     data: dict[str, Any] | None = None,
     subentry_type: str = "conversation",
@@ -238,6 +325,39 @@ def test_convert_content_to_responses_input() -> None:
     assert message_dicts[3]["type"] == "function_call_output"
 
 
+def test_convert_content_to_chat_completion_input() -> None:
+    """Test Home Assistant chat content is converted to Chat Completions input."""
+    tool_input = llm.ToolInput(
+        id="call_1",
+        tool_args={"value": "lamp"},
+        tool_name="Echo",
+    )
+    content: list[conversation.Content] = [
+        conversation.SystemContent("Be concise."),
+        conversation.UserContent("Turn on the lamp."),
+        conversation.AssistantContent(
+            agent_id="conversation.groq_cloud",
+            tool_calls=[tool_input],
+        ),
+        conversation.ToolResultContent(
+            agent_id="conversation.groq_cloud",
+            tool_call_id="call_1",
+            tool_name="Echo",
+            tool_result={"value": "lamp"},
+        ),
+    ]
+
+    messages = _convert_content_to_chat_completion_param(content)
+    message_dicts = cast("list[dict[str, Any]]", messages)
+
+    assert message_dicts[0]["role"] == "system"
+    assert message_dicts[1]["role"] == "user"
+    assert message_dicts[2]["role"] == "assistant"
+    assert message_dicts[2]["tool_calls"][0]["id"] == "call_1"
+    assert message_dicts[3]["role"] == "tool"
+    assert message_dicts[3]["tool_call_id"] == "call_1"
+
+
 async def test_handle_chat_log_streams_text(hass: HomeAssistant) -> None:
     """Test streamed text deltas are added to the Home Assistant chat log."""
     client = MagicMock()
@@ -262,10 +382,10 @@ async def test_handle_chat_log_runs_ha_tool_round_trip(
 ) -> None:
     """Test Groq function calls are executed through a Home Assistant LLM API."""
     client = MagicMock()
-    client.responses.create = AsyncMock(
+    client.chat.completions.create = AsyncMock(
         side_effect=[
-            FakeStream(_tool_call_events()),
-            FakeStream(_message_events("Done")),
+            FakeStream(_chat_tool_call_chunks()),
+            FakeStream(_chat_message_chunks("Done")),
         ]
     )
     entity = _make_entity(client, _make_subentry())
@@ -286,13 +406,13 @@ async def test_handle_chat_log_runs_ha_tool_round_trip(
 
     await entity._async_handle_chat_log(chat_log)
 
-    assert client.responses.create.await_count == 2
-    first_request = client.responses.create.await_args_list[0].kwargs
-    second_request = client.responses.create.await_args_list[1].kwargs
-    assert first_request["tools"][0]["name"] == "Echo"
+    assert client.chat.completions.create.await_count == 2
+    first_request = client.chat.completions.create.await_args_list[0].kwargs
+    second_request = client.chat.completions.create.await_args_list[1].kwargs
+    assert first_request["tools"][0]["function"]["name"] == "Echo"
     assert any(
-        message["type"] == "function_call_output" and message["call_id"] == "call_1"
-        for message in cast("ResponseInputParam", second_request["input"])
+        message["role"] == "tool" and message["tool_call_id"] == "call_1"
+        for message in cast("list[dict[str, Any]]", second_request["messages"])
     )
     assert isinstance(chat_log.content[-1], conversation.AssistantContent)
     assert chat_log.content[-1].content == "Done"
@@ -303,10 +423,10 @@ async def test_handle_chat_log_enforces_tool_iteration_cap(
 ) -> None:
     """Test tool loops fail after the configured iteration cap."""
     client = MagicMock()
-    client.responses.create = AsyncMock(
+    client.chat.completions.create = AsyncMock(
         side_effect=[
-            FakeStream(_tool_call_events()),
-            FakeStream(_tool_call_events('{"value": "second"}')),
+            FakeStream(_chat_tool_call_chunks()),
+            FakeStream(_chat_tool_call_chunks('{"value": "second"}')),
         ]
     )
     entity = _make_entity(client, _make_subentry())
@@ -328,4 +448,4 @@ async def test_handle_chat_log_enforces_tool_iteration_cap(
     with pytest.raises(HomeAssistantError, match="tool call limit"):
         await entity._async_handle_chat_log(chat_log, max_iterations=2)
 
-    assert client.responses.create.await_count == 2
+    assert client.chat.completions.create.await_count == 2
