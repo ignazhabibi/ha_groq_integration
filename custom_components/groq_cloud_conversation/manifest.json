@@ -1,0 +1,14 @@
+{
+  "domain": "groq_cloud_conversation",
+  "name": "Groq Cloud Conversation",
+  "after_dependencies": ["assist_pipeline", "intent"],
+  "codeowners": [],
+  "config_flow": true,
+  "dependencies": ["conversation"],
+  "documentation": "https://github.com/ignazhabibi/ha_groq_integration",
+  "integration_type": "service",
+  "iot_class": "cloud_polling",
+  "requirements": ["openai==2.21.0"],
+  "version": "0.1.0"
+}
+

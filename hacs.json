@@ -1,0 +1,8 @@
+{
+  "domains": ["groq_cloud_conversation"],
+  "homeassistant": "2026.6.0",
+  "iot_class": "cloud_polling",
+  "name": "Groq Cloud Conversation",
+  "render_readme": true
+}
+
