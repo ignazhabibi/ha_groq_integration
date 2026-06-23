@@ -29,6 +29,7 @@ from custom_components.groq_cloud_conversation.const import (
     DEFAULT_CONVERSATION_NAME,
     DEFAULT_STT_NAME,
     DOMAIN,
+    RECOMMENDED_STRUCTURED_OUTPUT_MODEL,
     RECOMMENDED_STT_MODEL,
 )
 
@@ -267,6 +268,10 @@ async def test_subentry_advanced_step_uses_live_model_dropdown(
                 "value": "llama-3.1-8b-instant",
             },
             {
+                "label": "Production - Llama 3.3 70B (llama-3.3-70b-versatile)",
+                "value": "llama-3.3-70b-versatile",
+            },
+            {
                 "label": (
                     "Preview - Llama 4 Scout 17B 16E "
                     "(meta-llama/llama-4-scout-17b-16e-instruct)"
@@ -276,6 +281,67 @@ async def test_subentry_advanced_step_uses_live_model_dropdown(
             {
                 "label": "Available - custom/live-chat-model",
                 "value": "custom/live-chat-model",
+            },
+        ],
+        "mode": "dropdown",
+        "sort": False,
+        "custom_value": False,
+        "multiple": False,
+    }
+    object.__setattr__(entry, "state", ConfigEntryState.NOT_LOADED)
+
+
+async def test_ai_task_subentry_advanced_step_filters_structured_output_models(
+    hass: HomeAssistant,
+) -> None:
+    """Test AI task model options only show Structured Outputs models."""
+    client = MagicMock()
+    client.models.list = AsyncMock(
+        return_value=SimpleNamespace(
+            data=[
+                _model("custom/live-chat-model"),
+                _model("llama-3.3-70b-versatile"),
+                _model("openai/gpt-oss-120b"),
+                _model("openai/gpt-oss-20b"),
+            ]
+        )
+    )
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        data={CONF_API_KEY: "groq-key"},
+        state=ConfigEntryState.LOADED,
+        subentries_data=[],
+        title="Groq Cloud",
+    )
+    entry.runtime_data = client
+    entry.add_to_hass(hass)
+
+    result = await hass.config_entries.subentries.async_init(
+        (entry.entry_id, "ai_task_data"),
+        context={"source": "user"},
+    )
+    assert result["type"] is FlowResultType.FORM
+    assert result["step_id"] == "init"
+
+    result = await hass.config_entries.subentries.async_configure(
+        result["flow_id"],
+        user_input={CONF_NAME: "Groq AI Task", CONF_RECOMMENDED: False},
+    )
+
+    assert result["type"] is FlowResultType.FORM
+    assert result["step_id"] == "advanced"
+    data_schema = result["data_schema"]
+    assert data_schema is not None
+    selector = _get_schema_field(data_schema, CONF_CHAT_MODEL)
+    assert selector.serialize()["selector"]["select"] == {
+        "options": [
+            {
+                "label": "Production - OpenAI GPT-OSS 120B (openai/gpt-oss-120b)",
+                "value": "openai/gpt-oss-120b",
+            },
+            {
+                "label": "Production - OpenAI GPT-OSS 20B (openai/gpt-oss-20b)",
+                "value": RECOMMENDED_STRUCTURED_OUTPUT_MODEL,
             },
         ],
         "mode": "dropdown",

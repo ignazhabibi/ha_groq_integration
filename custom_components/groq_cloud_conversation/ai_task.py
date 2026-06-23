@@ -80,7 +80,7 @@ class GroqCloudTaskEntity(
         try:
             data = json_loads(text)
         except JSONDecodeError as err:
-            _LOGGER.exception("Failed to parse JSON response. Response: %s", text)
+            _LOGGER.warning("Failed to parse Groq structured response: %s", err)
             message = "Error with Groq structured response"
             raise HomeAssistantError(message) from err
 

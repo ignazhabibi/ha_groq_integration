@@ -62,13 +62,17 @@ All subentries can be reconfigured from the integration options.
 The default model is:
 
 ```text
-meta-llama/llama-4-scout-17b-16e-instruct
+llama-3.3-70b-versatile
 ```
 
-You can override the model in each conversation or AI task subentry. The
-advanced subentry options load available Groq Chat Completions models from the
-Groq Models API and show them in a dropdown. Known models are labeled as
-Production or Preview based on Groq's model documentation.
+You can override the model in each conversation subentry. The advanced
+conversation options load available Groq Chat Completions models from the Groq
+Models API and show them in a dropdown. Known models are labeled as Production
+or Preview based on Groq's model documentation.
+
+AI task model options are limited to Groq models with `json_schema` Structured
+Outputs support. If an older AI task subentry has no compatible model stored,
+structured tasks fall back to `openai/gpt-oss-20b`.
 
 The default speech-to-text model is:
 
