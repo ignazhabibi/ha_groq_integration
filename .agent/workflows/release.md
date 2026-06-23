@@ -46,6 +46,11 @@ python3.14 -m venv .venv
 .venv/bin/python -m pytest -q
 ```
 
+5. For release workflow changes, verify the generated asset is a Home Assistant
+   integration archive containing `custom_components/groq_cloud_conversation/`,
+   `manifest.json`, translations, brand assets, `hacs.json`, `README.md`, and
+   `LICENSE`.
+
 ## 2. Analysis & Versioning
 
 1. Read current versions from:

@@ -62,6 +62,8 @@ Strict guidelines for version control and feature development in
   `.github/workflows/release.yml`.
 - Pre-release validation uses tags like `vX.Y.Z-alpha.N`, `vX.Y.Z-beta.N`, or
   `vX.Y.Z-rc.N` and `.github/workflows/pre-release.yml`.
+- Release workflows publish a Home Assistant integration archive, not an empty
+  Python wheel.
 - Version changes must update both:
   - `custom_components/groq_cloud_conversation/manifest.json`
   - `pyproject.toml`
