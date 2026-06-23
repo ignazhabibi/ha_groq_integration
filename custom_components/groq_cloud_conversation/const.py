@@ -24,8 +24,9 @@ CONF_STT_MODEL: Final = "stt_model"
 CONF_TEMPERATURE: Final = "temperature"
 CONF_TOP_P: Final = "top_p"
 
-RECOMMENDED_CHAT_MODEL: Final = "meta-llama/llama-4-scout-17b-16e-instruct"
+RECOMMENDED_CHAT_MODEL: Final = "llama-3.3-70b-versatile"
 RECOMMENDED_MAX_TOKENS: Final = 1024
+RECOMMENDED_STRUCTURED_OUTPUT_MODEL: Final = "openai/gpt-oss-20b"
 RECOMMENDED_STT_MODEL: Final = "whisper-large-v3-turbo"
 RECOMMENDED_TEMPERATURE: Final = 0.7
 RECOMMENDED_TOP_P: Final = 1.0
@@ -54,6 +55,12 @@ GROQ_UNSUPPORTED_CHAT_MODEL_IDS: Final[frozenset[str]] = frozenset(
         "whisper-large-v3-turbo",
     }
 )
+GROQ_STRUCTURED_OUTPUT_MODEL_IDS: Final[frozenset[str]] = frozenset(
+    {
+        "openai/gpt-oss-120b",
+        "openai/gpt-oss-20b",
+    }
+)
 GROQ_STT_MODELS: Final[Mapping[str, str]] = {
     "whisper-large-v3-turbo": "Whisper Large v3 Turbo",
     "whisper-large-v3": "Whisper Large v3",
@@ -63,6 +70,7 @@ DEFAULT_STT_PROMPT: Final = (
 )
 
 RECOMMENDED_AI_TASK_OPTIONS: Final = {
+    CONF_CHAT_MODEL: RECOMMENDED_STRUCTURED_OUTPUT_MODEL,
     CONF_RECOMMENDED: True,
 }
 

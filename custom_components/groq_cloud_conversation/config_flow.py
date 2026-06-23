@@ -46,12 +46,14 @@ from .const import (
     GROQ_BASE_URL,
     GROQ_PREVIEW_CHAT_MODELS,
     GROQ_PRODUCTION_CHAT_MODELS,
+    GROQ_STRUCTURED_OUTPUT_MODEL_IDS,
     GROQ_STT_MODELS,
     GROQ_UNSUPPORTED_CHAT_MODEL_IDS,
     RECOMMENDED_AI_TASK_OPTIONS,
     RECOMMENDED_CHAT_MODEL,
     RECOMMENDED_CONVERSATION_OPTIONS,
     RECOMMENDED_MAX_TOKENS,
+    RECOMMENDED_STRUCTURED_OUTPUT_MODEL,
     RECOMMENDED_STT_MODEL,
     RECOMMENDED_STT_OPTIONS,
     RECOMMENDED_TEMPERATURE,
@@ -105,14 +107,18 @@ def _model_label(model_id: str) -> str:
 def _model_selector_options(
     model_ids: list[str],
     selected_model: str | None = None,
+    allowed_model_ids: frozenset[str] | None = None,
 ) -> list[SelectOptionDict]:
     """Build selector options for Groq Chat Completions models."""
     available_model_ids = {
         model_id
         for model_id in model_ids
         if model_id and model_id not in GROQ_UNSUPPORTED_CHAT_MODEL_IDS
+        if allowed_model_ids is None or model_id in allowed_model_ids
     }
-    if selected_model:
+    if selected_model and (
+        allowed_model_ids is None or selected_model in allowed_model_ids
+    ):
         available_model_ids.add(selected_model)
 
     return [
@@ -151,6 +157,7 @@ def _stt_model_selector_options(
 async def _async_get_model_selector_options(
     entry: GroqCloudConfigEntry,
     selected_model: str | None = None,
+    allowed_model_ids: frozenset[str] | None = None,
 ) -> list[SelectOptionDict]:
     """Fetch the live Groq model list and return dropdown options."""
     try:
@@ -160,16 +167,32 @@ async def _async_get_model_selector_options(
             "Could not fetch Groq models; using documented fallback models",
             exc_info=True,
         )
-        return _model_selector_options(list(_known_chat_model_ids()), selected_model)
+        return _model_selector_options(
+            list(_known_chat_model_ids()),
+            selected_model,
+            allowed_model_ids,
+        )
 
     model_options = _model_selector_options(
         [model.id for model in models.data],
         selected_model,
+        allowed_model_ids,
     )
     if model_options:
         return model_options
 
-    return _model_selector_options(list(_known_chat_model_ids()), selected_model)
+    return _model_selector_options(
+        list(_known_chat_model_ids()),
+        selected_model,
+        allowed_model_ids,
+    )
+
+
+def _default_chat_model_for_subentry(subentry_type: str) -> str:
+    """Return the default Chat Completions model for a subentry type."""
+    if subentry_type == "ai_task_data":
+        return RECOMMENDED_STRUCTURED_OUTPUT_MODEL
+    return RECOMMENDED_CHAT_MODEL
 
 
 class GroqCloudConfigFlow(ConfigFlow, domain=DOMAIN):
@@ -392,14 +415,28 @@ class GroqCloudSubentryFlowHandler(ConfigSubentryFlow):
             return await self.async_step_stt_advanced(user_input)
 
         options = self.options
+        default_chat_model = _default_chat_model_for_subentry(self._subentry_type)
+        selected_chat_model = options.get(CONF_CHAT_MODEL, default_chat_model)
+        allowed_model_ids = (
+            GROQ_STRUCTURED_OUTPUT_MODEL_IDS
+            if self._subentry_type == "ai_task_data"
+            else None
+        )
+        if (
+            allowed_model_ids is not None
+            and selected_chat_model not in allowed_model_ids
+        ):
+            selected_chat_model = default_chat_model
+
         model_options = await _async_get_model_selector_options(
             cast("GroqCloudConfigEntry", self._get_entry()),
-            options.get(CONF_CHAT_MODEL, RECOMMENDED_CHAT_MODEL),
+            selected_chat_model,
+            allowed_model_ids,
         )
         step_schema: VolDictType = {
             vol.Optional(
                 CONF_CHAT_MODEL,
-                default=options.get(CONF_CHAT_MODEL, RECOMMENDED_CHAT_MODEL),
+                default=selected_chat_model,
             ): SelectSelector(
                 SelectSelectorConfig(
                     options=model_options,

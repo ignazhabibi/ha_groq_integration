@@ -50,7 +50,7 @@
             "top_p": "Top P"
           },
           "data_description": {
-            "chat_model": "Available Groq Chat Completions models. Audio and guard models are not shown."
+            "chat_model": "Groq Chat Completions models that support Structured Outputs."
           },
           "title": "Advanced settings"
         },

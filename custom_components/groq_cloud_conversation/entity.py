@@ -1,7 +1,8 @@
 """Shared LLM entity support for Groq Cloud Conversation."""
 
 import json
-from collections.abc import AsyncGenerator, Callable, Iterable
+from collections.abc import AsyncGenerator, Callable, Iterable, Mapping
+from json import JSONDecodeError
 from typing import TYPE_CHECKING, Any, Literal, cast
 
 import openai
@@ -34,9 +35,11 @@ from .const import (
     CONF_TEMPERATURE,
     CONF_TOP_P,
     DOMAIN,
+    GROQ_STRUCTURED_OUTPUT_MODEL_IDS,
     LOGGER,
     RECOMMENDED_CHAT_MODEL,
     RECOMMENDED_MAX_TOKENS,
+    RECOMMENDED_STRUCTURED_OUTPUT_MODEL,
     RECOMMENDED_TEMPERATURE,
     RECOMMENDED_TOP_P,
 )
@@ -121,6 +124,19 @@ def _format_chat_completion_tool(
     )
 
 
+def _decode_tool_call_arguments(tool_call: Mapping[str, str]) -> dict[str, Any]:
+    """Decode a Groq tool call argument payload."""
+    try:
+        arguments = json.loads(tool_call["arguments"] or "{}")
+    except JSONDecodeError as err:
+        raise HomeAssistantError("Groq returned malformed tool call arguments") from err
+
+    if not isinstance(arguments, dict):
+        raise HomeAssistantError("Groq returned non-object tool call arguments")
+
+    return cast("dict[str, Any]", arguments)
+
+
 def _convert_content_to_chat_completion_param(
     chat_content: Iterable[conversation.Content],
 ) -> list[ChatCompletionMessageParam]:
@@ -189,7 +205,10 @@ async def _transform_chat_completion_stream(
     last_role: Literal["assistant"] | None = None
 
     async for chunk in stream:
-        LOGGER.debug("Received Groq chat completion chunk: %s", chunk)
+        LOGGER.debug(
+            "Received Groq chat completion chunk with %d choices",
+            len(chunk.choices),
+        )
 
         if chunk.usage is not None:
             chat_log.async_trace(
@@ -236,7 +255,7 @@ async def _transform_chat_completion_stream(
                     "tool_calls": [
                         llm.ToolInput(
                             id=tool_call["id"],
-                            tool_args=json.loads(tool_call["arguments"] or "{}"),
+                            tool_args=_decode_tool_call_arguments(tool_call),
                             tool_name=tool_call["name"],
                         )
                         for _, tool_call in sorted(tool_calls.items())
@@ -261,6 +280,13 @@ def _add_chat_completion_usage_to_trace(
             }
         }
     )
+
+
+def _model_for_structured_output(model: str) -> str:
+    """Return a model compatible with Groq Structured Outputs."""
+    if model in GROQ_STRUCTURED_OUTPUT_MODEL_IDS:
+        return model
+    return RECOMMENDED_STRUCTURED_OUTPUT_MODEL
 
 
 class GroqCloudBaseLLMEntity(Entity):
@@ -361,7 +387,9 @@ class GroqCloudBaseLLMEntity(Entity):
         model_args = CompletionCreateParamsNonStreaming(
             max_completion_tokens=options.get(CONF_MAX_TOKENS, RECOMMENDED_MAX_TOKENS),
             messages=_convert_content_to_chat_completion_param(chat_log.content),
-            model=options.get(CONF_CHAT_MODEL, RECOMMENDED_CHAT_MODEL),
+            model=_model_for_structured_output(
+                options.get(CONF_CHAT_MODEL, RECOMMENDED_CHAT_MODEL)
+            ),
             response_format=cast(
                 "Any",
                 {
@@ -371,7 +399,7 @@ class GroqCloudBaseLLMEntity(Entity):
                             structure,
                             chat_log.llm_api,
                         ),
-                        "strict": False,
+                        "strict": True,
                     },
                     "type": "json_schema",
                 },

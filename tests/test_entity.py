@@ -32,10 +32,12 @@ from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 from custom_components.groq_cloud_conversation import GroqCloudConfigEntry
 from custom_components.groq_cloud_conversation.const import (
+    CONF_CHAT_MODEL,
     DOMAIN,
     RECOMMENDED_CHAT_MODEL,
     RECOMMENDED_CONVERSATION_OPTIONS,
     RECOMMENDED_MAX_TOKENS,
+    RECOMMENDED_STRUCTURED_OUTPUT_MODEL,
     RECOMMENDED_TEMPERATURE,
     RECOMMENDED_TOP_P,
 )
@@ -363,6 +365,34 @@ async def test_handle_chat_log_runs_ha_tool_round_trip(
     assert chat_log.content[-1].content == "Done"
 
 
+async def test_handle_chat_log_rejects_malformed_tool_arguments(
+    hass: HomeAssistant,
+) -> None:
+    """Test malformed Groq tool arguments fail as a Home Assistant error."""
+    client = MagicMock()
+    client.chat.completions.create = AsyncMock(
+        return_value=FakeStream(_chat_tool_call_chunks("{not-json"))
+    )
+    entity = _make_entity(client, _make_subentry())
+    chat_log = _make_chat_log(hass)
+    llm_context = llm.LLMContext(
+        platform="conversation",
+        context=None,
+        language="en",
+        assistant=DOMAIN,
+        device_id=None,
+    )
+    chat_log.llm_api = llm.APIInstance(
+        api=FakeAPI(hass=hass, id="fake", name="Fake"),
+        api_prompt="",
+        llm_context=llm_context,
+        tools=[EchoTool()],
+    )
+
+    with pytest.raises(HomeAssistantError, match="malformed tool call arguments"):
+        await entity._async_handle_chat_log(chat_log)
+
+
 async def test_handle_chat_log_uses_chat_completions_structured_output(
     hass: HomeAssistant,
 ) -> None:
@@ -382,13 +412,38 @@ async def test_handle_chat_log_uses_chat_completions_structured_output(
 
     client.chat.completions.create.assert_awaited_once()
     request = client.chat.completions.create.call_args.kwargs
+    assert request["model"] == RECOMMENDED_STRUCTURED_OUTPUT_MODEL
     assert request["stream"] is False
     assert request["response_format"]["type"] == "json_schema"
     assert request["response_format"]["json_schema"]["name"] == "extract_data"
-    assert request["response_format"]["json_schema"]["strict"] is False
+    assert request["response_format"]["json_schema"]["strict"] is True
     assert "tools" not in request
     assert isinstance(chat_log.content[-1], conversation.AssistantContent)
     assert chat_log.content[-1].content == '{"value": "ok"}'
+
+
+async def test_handle_chat_log_keeps_supported_structured_output_model(
+    hass: HomeAssistant,
+) -> None:
+    """Test structured output honors a configured compatible Groq model."""
+    client = MagicMock()
+    client.chat.completions.create = AsyncMock(
+        return_value=_chat_completion('{"value": "ok"}')
+    )
+    entity = _make_entity(
+        client,
+        _make_subentry({CONF_CHAT_MODEL: "openai/gpt-oss-120b"}),
+    )
+    chat_log = _make_chat_log(hass)
+
+    await entity._async_handle_chat_log(
+        chat_log,
+        structure=vol.Schema({vol.Required("value"): str}),
+        structure_name="Extract data",
+    )
+
+    request = client.chat.completions.create.call_args.kwargs
+    assert request["model"] == "openai/gpt-oss-120b"
 
 
 async def test_handle_chat_log_enforces_tool_iteration_cap(
