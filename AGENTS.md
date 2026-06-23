@@ -6,7 +6,8 @@ This repository contains the `groq_cloud_conversation` custom integration for Ho
 
 - a Home Assistant Assist conversation agent,
 - an AI task entity for text and structured data generation,
-- an adapter between Home Assistant's LLM API/tool system and Groq's OpenAI-compatible Chat Completions API.
+- a speech-to-text entity for Groq Whisper transcription,
+- an adapter between Home Assistant's LLM/STT APIs and Groq's OpenAI-compatible API.
 
 Use Home Assistant's official LLM API docs as the behavioral contract. The official `openai_conversation` integration remains a useful lifecycle and Home Assistant integration reference, but Groq request/response transport should follow Groq's Chat Completions and tool-calling documentation:
 
@@ -19,6 +20,9 @@ Use Home Assistant's official LLM API docs as the behavioral contract. The offic
 
 - `custom_components/groq_cloud_conversation/`: Home Assistant integration code.
 - `tests/`: pytest tests using `pytest-homeassistant-custom-component`.
+- `.github/workflows/`: CI, stable release, and prerelease pipelines.
+- `.agent/rules/`: repository-specific process and tech-stack rules for agents.
+- `.agent/workflows/`: PR submission and release playbooks.
 - `pyproject.toml`: dependency, Ruff, pytest, and strict mypy configuration.
 - `hacs.json`: HACS metadata.
 - `README.md`: user-facing project overview.
@@ -32,11 +36,22 @@ python3.14 -m venv .venv
 .venv/bin/python -m pip install -e '.[dev]'
 .venv/bin/python -m pytest
 .venv/bin/python -m ruff check .
+.venv/bin/python -m ruff format --check .
 .venv/bin/python -m ruff format .
 .venv/bin/python -m mypy
 ```
 
 When changing only documentation, running the test suite is optional. For code changes, run the narrowest relevant tests first, then broaden to `pytest`, `ruff check`, and `mypy` when behavior, typing, or shared adapters are affected.
+
+## CI and Release Process
+
+- GitHub Actions are defined in `.github/workflows/release.yml` and `.github/workflows/pre-release.yml`.
+- Pull requests and `main` pushes run `ruff check`, `ruff format --check`, `mypy`, and `pytest`.
+- Stable tags `vX.Y.Z` build the package and publish a GitHub release.
+- Prerelease tags `vX.Y.Z-alpha.N`, `vX.Y.Z-beta.N`, and `vX.Y.Z-rc.N` build the package and publish a GitHub prerelease.
+- Keep release versions aligned in both `custom_components/groq_cloud_conversation/manifest.json` and `pyproject.toml`.
+- Use `.agent/workflows/pr-submit.md` for PR preparation and `.agent/workflows/release.md` for versioning, changelog, and tag work.
+- Do not create release branches, bump versions, tag, push release refs, or claim a release is live without explicit user confirmation.
 
 ## Home Assistant Integration Rules
 
@@ -50,7 +65,7 @@ When changing only documentation, running the test suite is optional. For code c
   - runtime user-facing failures -> `HomeAssistantError`,
   - config-flow form errors -> `cannot_connect`, `invalid_auth`, or `unknown`.
 - Keep translations and UI copy in `strings.json` when user-visible.
-- Preserve subentry support for both `conversation` and `ai_task_data` unless a task explicitly changes that surface.
+- Preserve subentry support for `conversation`, `ai_task_data`, and `stt` unless a task explicitly changes that surface.
 
 ## LLM and Groq Rules
 
