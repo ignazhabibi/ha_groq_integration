@@ -44,7 +44,7 @@ jobs:
       - name: Build integration archive
         run: |
           mkdir -p dist
-          archive="dist/groq_cloud_conversation-${GITHUB_REF_NAME}.zip"
+          archive="dist/groq_cloud_conversation.zip"
           test -f custom_components/groq_cloud_conversation/manifest.json
           test -f custom_components/groq_cloud_conversation/strings.json
           test -f custom_components/groq_cloud_conversation/stt.py

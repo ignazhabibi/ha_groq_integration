@@ -50,6 +50,7 @@ python3.14 -m venv .venv
    integration archive containing `custom_components/groq_cloud_conversation/`,
    `manifest.json`, translations, brand assets, `hacs.json`, `README.md`, and
    `LICENSE`.
+6. Confirm the generated archive filename matches `hacs.json` `filename`.
 
 ## 2. Analysis & Versioning
 

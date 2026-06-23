@@ -64,6 +64,8 @@ Strict guidelines for version control and feature development in
   `vX.Y.Z-rc.N` and `.github/workflows/pre-release.yml`.
 - Release workflows publish a Home Assistant integration archive, not an empty
   Python wheel.
+- Keep the archive filename fixed and aligned with `hacs.json` `filename`, so
+  HACS can download release assets predictably.
 - Version changes must update both:
   - `custom_components/groq_cloud_conversation/manifest.json`
   - `pyproject.toml`

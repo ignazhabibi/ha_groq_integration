@@ -49,6 +49,7 @@ When changing only documentation, running the test suite is optional. For code c
 - Pull requests and `main` pushes run `ruff check`, `ruff format --check`, `mypy`, and `pytest`.
 - Stable tags `vX.Y.Z` build a Home Assistant integration archive and publish a GitHub release.
 - Prerelease tags `vX.Y.Z-alpha.N`, `vX.Y.Z-beta.N`, and `vX.Y.Z-rc.N` build a Home Assistant integration archive and publish a GitHub prerelease.
+- The release archive filename must stay aligned with `hacs.json` `filename`; HACS expects a fixed release asset name.
 - Keep release versions aligned in both `custom_components/groq_cloud_conversation/manifest.json` and `pyproject.toml`.
 - Use `.agent/workflows/pr-submit.md` for PR preparation and `.agent/workflows/release.md` for versioning, changelog, and tag work.
 - Do not create release branches, bump versions, tag, push release refs, or claim a release is live without explicit user confirmation.
