@@ -42,19 +42,20 @@ jobs:
       - name: Build integration archive
         run: |
           mkdir -p dist
-          archive="dist/groq_cloud_conversation.zip"
+          archive="$GITHUB_WORKSPACE/dist/groq_cloud_conversation.zip"
           test -f custom_components/groq_cloud_conversation/manifest.json
           test -f custom_components/groq_cloud_conversation/strings.json
           test -f custom_components/groq_cloud_conversation/stt.py
           test -f custom_components/groq_cloud_conversation/translations/en.json
           test -f custom_components/groq_cloud_conversation/brand/logo.png
-          zip -r "$archive" \
-            custom_components/groq_cloud_conversation \
-            hacs.json \
-            README.md \
-            LICENSE \
-            -x "*/__pycache__/*" "*.pyc"
+          cd custom_components/groq_cloud_conversation
+          find . -type f \
+            ! -path "*/__pycache__/*" \
+            ! -name "*.pyc" \
+            -print | sed "s#^\./##" | sort | zip -q "$archive" -@
           unzip -l "$archive"
+          unzip -l "$archive" | grep -q " manifest.json$"
+          unzip -l "$archive" | grep -q " translations/en.json$"
       - name: Fetch Tag Message
         id: tag_message
         run: |
