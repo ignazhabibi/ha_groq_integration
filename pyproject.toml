@@ -4,7 +4,7 @@ requires = ["setuptools>=77.0.0"]
 
 [project]
 name = "ha-groq-cloud-conversation"
-version = "0.1.1"
+version = "0.1.2"
 description = "Home Assistant custom integration for Groq Cloud conversation, AI tasks, and speech-to-text."
 readme = "README.md"
 requires-python = ">=3.14"
