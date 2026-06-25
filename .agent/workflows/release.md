@@ -47,9 +47,9 @@ python3.14 -m venv .venv
 ```
 
 5. For release workflow changes, verify the generated asset is a Home Assistant
-   integration archive containing `custom_components/groq_cloud_conversation/`,
-   `manifest.json`, translations, brand assets, `hacs.json`, `README.md`, and
-   `LICENSE`.
+   integration archive with `manifest.json`, translations, brand assets, and
+   Python modules at the ZIP root. HACS extracts `zip_release` assets directly
+   into `/config/custom_components/groq_cloud_conversation/`.
 6. Confirm the generated archive filename matches `hacs.json` `filename`.
 
 ## 2. Analysis & Versioning
