@@ -2,8 +2,6 @@
   "domains": ["groq_cloud_conversation"],
   "homeassistant": "2026.6.0",
   "iot_class": "cloud_polling",
-  "filename": "groq_cloud_conversation.zip",
   "name": "Groq Cloud Conversation",
-  "render_readme": true,
-  "zip_release": true
+  "render_readme": true
 }

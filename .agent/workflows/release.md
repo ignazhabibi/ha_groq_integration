@@ -46,11 +46,12 @@ python3.14 -m venv .venv
 .venv/bin/python -m pytest -q
 ```
 
-5. For release workflow changes, verify the generated asset is a Home Assistant
-   integration archive with `manifest.json`, translations, brand assets, and
-   Python modules at the ZIP root. HACS extracts `zip_release` assets directly
-   into `/config/custom_components/groq_cloud_conversation/`.
-6. Confirm the generated archive filename matches `hacs.json` `filename`.
+5. For release workflow changes, verify the repository still uses the standard
+   HACS integration layout under `custom_components/groq_cloud_conversation/`
+   with `manifest.json`, translations, brand assets, and Python modules in that
+   directory.
+6. Do not add `zip_release` or release-asset filename requirements unless the
+   distribution model is explicitly changed.
 
 ## 2. Analysis & Versioning
 
