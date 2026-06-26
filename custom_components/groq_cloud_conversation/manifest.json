@@ -8,6 +8,5 @@
   "documentation": "https://github.com/ignazhabibi/ha_groq_integration",
   "integration_type": "service",
   "iot_class": "cloud_polling",
-  "requirements": ["openai==2.21.0"],
   "version": "0.1.2"
 }

@@ -25,7 +25,6 @@ classifiers = [
 ]
 dependencies = [
   "homeassistant>=2026.6.0",
-  "openai==2.21.0",
 ]
 
 [project.urls]
@@ -35,8 +34,10 @@ Repository = "https://github.com/ignazhabibi/ha_groq_integration"
 
 [project.optional-dependencies]
 dev = [
+  "ha-ffmpeg==3.2.2",
   "hassil==3.8.0",
   "home-assistant-intents==2026.6.1",
+  "mutagen==1.47.0",
   "mypy>=1.18.0",
   "PyTurboJPEG==1.8.3",
   "pytest-homeassistant-custom-component>=0.13.300",

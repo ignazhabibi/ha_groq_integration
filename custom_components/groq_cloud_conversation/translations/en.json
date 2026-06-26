@@ -47,10 +47,12 @@
             "chat_model": "Model",
             "max_tokens": "Maximum tokens to return in response",
             "temperature": "Temperature",
-            "top_p": "Top P"
+            "top_p": "Top P",
+            "vision_model": "Vision model"
           },
           "data_description": {
-            "chat_model": "Groq Chat Completions models that support Structured Outputs."
+            "chat_model": "Groq Chat Completions models that support Structured Outputs.",
+            "vision_model": "Groq multimodal model used when an AI task includes image attachments."
           },
           "title": "Advanced settings"
         },
@@ -117,6 +119,39 @@
           "data_description": {
             "prompt": "Optional context to improve smart-home transcription.",
             "stt_model": "Groq Whisper model used for audio transcription."
+          },
+          "title": "Advanced settings"
+        },
+        "init": {
+          "data": {
+            "name": "Name",
+            "recommended": "Recommended model settings"
+          }
+        }
+      }
+    },
+    "tts": {
+      "abort": {
+        "entry_not_loaded": "Cannot add things while the configuration is disabled.",
+        "reconfigure_successful": "Reconfiguration was successful"
+      },
+      "entry_type": "Text-to-speech",
+      "error": {
+        "unsupported_voice": "The selected voice is not supported by the selected model."
+      },
+      "initiate_flow": {
+        "reconfigure": "Reconfigure text-to-speech",
+        "user": "Add text-to-speech"
+      },
+      "step": {
+        "advanced": {
+          "data": {
+            "tts_model": "Model",
+            "tts_voice": "Voice"
+          },
+          "data_description": {
+            "tts_model": "Groq Orpheus model used for text-to-speech audio.",
+            "tts_voice": "Groq Orpheus voice persona."
           },
           "title": "Advanced settings"
         },

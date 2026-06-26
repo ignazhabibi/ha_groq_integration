@@ -1,39 +1,30 @@
 """Shared LLM entity support for Groq Cloud Conversation."""
 
+import base64
 import json
 from collections.abc import AsyncGenerator, Callable, Iterable, Mapping
 from json import JSONDecodeError
 from typing import TYPE_CHECKING, Any, Literal, cast
 
-import openai
 import voluptuous as vol
 from homeassistant.components import conversation
 from homeassistant.config_entries import ConfigSubentry
+from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import llm
 from homeassistant.helpers.entity import Entity
 from homeassistant.helpers.json import json_dumps
 from homeassistant.util import slugify
-from openai._streaming import AsyncStream
-from openai.types.chat import (
-    ChatCompletion,
-    ChatCompletionChunk,
-    ChatCompletionMessageParam,
-)
-from openai.types.chat.chat_completion_message_tool_call_param import Function
-from openai.types.chat.chat_completion_tool_param import ChatCompletionToolParam
-from openai.types.chat.completion_create_params import (
-    CompletionCreateParamsNonStreaming,
-    CompletionCreateParamsStreaming,
-)
 from voluptuous_openapi import convert
 
+from .api import GroqApiError, GroqAuthenticationError, GroqRateLimitError
 from .const import (
     CONF_CHAT_MODEL,
     CONF_MAX_TOKENS,
     CONF_TEMPERATURE,
     CONF_TOP_P,
+    CONF_VISION_MODEL,
     DOMAIN,
     GROQ_STRUCTURED_OUTPUT_MODEL_IDS,
     LOGGER,
@@ -42,14 +33,20 @@ from .const import (
     RECOMMENDED_STRUCTURED_OUTPUT_MODEL,
     RECOMMENDED_TEMPERATURE,
     RECOMMENDED_TOP_P,
+    RECOMMENDED_VISION_MODEL,
 )
+from .model_registry import GroqCapability
 
 if TYPE_CHECKING:
     from . import GroqCloudConfigEntry
 
 JsonSchema = dict[str, Any]
+ChatCompletionMessageParam = dict[str, Any]
+ChatCompletionToolParam = dict[str, Any]
 
 MAX_TOOL_ITERATIONS = 10
+MAX_VISION_IMAGES = 5
+MAX_BASE64_IMAGE_SIZE = 4 * 1024 * 1024
 
 
 def _format_tool_parameters(
@@ -113,15 +110,15 @@ def _format_chat_completion_tool(
     tool: llm.Tool, custom_serializer: Callable[[Any], Any] | None
 ) -> ChatCompletionToolParam:
     """Format a Home Assistant LLM tool for Chat Completions."""
-    return ChatCompletionToolParam(
-        function={
+    return {
+        "function": {
             "description": tool.description or "",
             "name": tool.name,
             "parameters": _format_tool_parameters(tool, custom_serializer),
             "strict": False,
         },
-        type="function",
-    )
+        "type": "function",
+    }
 
 
 def _decode_tool_call_arguments(tool_call: Mapping[str, str]) -> dict[str, Any]:
@@ -146,57 +143,121 @@ def _convert_content_to_chat_completion_param(
     for content in chat_content:
         if isinstance(content, conversation.ToolResultContent):
             messages.append(
-                cast(
-                    "ChatCompletionMessageParam",
-                    {
-                        "content": json_dumps(content.tool_result),
-                        "role": "tool",
-                        "tool_call_id": content.tool_call_id,
-                    },
-                )
+                {
+                    "content": json_dumps(content.tool_result),
+                    "role": "tool",
+                    "tool_call_id": content.tool_call_id,
+                }
             )
             continue
 
         if isinstance(content, conversation.AssistantContent) and content.tool_calls:
             messages.append(
-                cast(
-                    "ChatCompletionMessageParam",
-                    {
-                        "content": content.content or None,
-                        "role": "assistant",
-                        "tool_calls": [
-                            {
-                                "function": Function(
-                                    arguments=json_dumps(tool_call.tool_args),
-                                    name=tool_call.tool_name,
-                                ),
-                                "id": tool_call.id,
-                                "type": "function",
-                            }
-                            for tool_call in content.tool_calls
-                        ],
-                    },
-                )
+                {
+                    "content": content.content or None,
+                    "role": "assistant",
+                    "tool_calls": [
+                        {
+                            "function": {
+                                "arguments": json_dumps(tool_call.tool_args),
+                                "name": tool_call.tool_name,
+                            },
+                            "id": tool_call.id,
+                            "type": "function",
+                        }
+                        for tool_call in content.tool_calls
+                    ],
+                }
             )
             continue
 
         if content.content:
             messages.append(
-                cast(
-                    "ChatCompletionMessageParam",
-                    {
-                        "content": content.content,
-                        "role": content.role,
-                    },
-                )
+                {
+                    "content": content.content,
+                    "role": content.role,
+                }
             )
 
     return messages
 
 
+async def _async_convert_content_to_chat_completion_param(
+    hass: HomeAssistant,
+    chat_content: Iterable[conversation.Content],
+) -> list[ChatCompletionMessageParam]:
+    """Convert Home Assistant chat content, including attachments, to messages."""
+    messages: list[ChatCompletionMessageParam] = []
+
+    for content in chat_content:
+        if isinstance(content, conversation.UserContent) and content.attachments:
+            messages.append(
+                {
+                    "content": await _async_format_user_content_with_attachments(
+                        hass,
+                        content,
+                    ),
+                    "role": "user",
+                }
+            )
+            continue
+
+        messages.extend(_convert_content_to_chat_completion_param([content]))
+
+    return messages
+
+
+async def _async_format_user_content_with_attachments(
+    hass: HomeAssistant,
+    content: conversation.UserContent,
+) -> list[dict[str, Any]]:
+    """Format user text and image attachments for Groq vision models."""
+    attachments = content.attachments or []
+    if len(attachments) > MAX_VISION_IMAGES:
+        raise HomeAssistantError("Groq vision supports at most 5 images per request")
+
+    message_content: list[dict[str, Any]] = []
+    if content.content:
+        message_content.append({"text": content.content, "type": "text"})
+
+    for attachment in attachments:
+        if not attachment.mime_type.startswith("image/"):
+            raise HomeAssistantError("Groq vision attachments must be images")
+        image_url = await hass.async_add_executor_job(
+            _attachment_to_data_url,
+            attachment,
+        )
+        message_content.append(
+            {
+                "image_url": {"url": image_url},
+                "type": "image_url",
+            }
+        )
+
+    return message_content
+
+
+def _attachment_to_data_url(attachment: conversation.Attachment) -> str:
+    """Read an image attachment and return a base64 data URL."""
+    encoded = base64.b64encode(attachment.path.read_bytes()).decode()
+    if len(encoded) > MAX_BASE64_IMAGE_SIZE:
+        raise HomeAssistantError("Groq vision image attachments must be under 4 MB")
+    return f"data:{attachment.mime_type};base64,{encoded}"
+
+
+def _chat_content_has_attachments(
+    chat_content: Iterable[conversation.Content],
+) -> bool:
+    """Return whether chat content includes user attachments."""
+    return any(
+        isinstance(content, conversation.UserContent) and bool(content.attachments)
+        for content in chat_content
+    )
+
+
 async def _transform_chat_completion_stream(
     chat_log: conversation.ChatLog,
-    stream: AsyncStream[ChatCompletionChunk],
+    stream: AsyncGenerator[dict[str, Any]],
 ) -> AsyncGenerator[
     conversation.AssistantContentDeltaDict | conversation.ToolResultContentDeltaDict
 ]:
@@ -205,52 +266,64 @@ async def _transform_chat_completion_stream(
     last_role: Literal["assistant"] | None = None
 
     async for chunk in stream:
+        choices = chunk.get("choices", [])
+        if not isinstance(choices, list):
+            continue
+
         LOGGER.debug(
             "Received Groq chat completion chunk with %d choices",
-            len(chunk.choices),
+            len(choices),
         )
 
-        if chunk.usage is not None:
+        usage = chunk.get("usage")
+        if isinstance(usage, dict):
             chat_log.async_trace(
                 {
                     "stats": {
-                        "input_tokens": chunk.usage.prompt_tokens,
-                        "output_tokens": chunk.usage.completion_tokens,
+                        "input_tokens": usage.get("prompt_tokens"),
+                        "output_tokens": usage.get("completion_tokens"),
                     }
                 }
             )
 
-        for choice in chunk.choices:
-            delta = choice.delta
-            if delta.role == "assistant" and last_role != "assistant":
+        for choice in choices:
+            if not isinstance(choice, dict):
+                continue
+            delta = choice.get("delta")
+            if not isinstance(delta, dict):
+                continue
+            if delta.get("role") == "assistant" and last_role != "assistant":
                 yield {"role": "assistant"}
                 last_role = "assistant"
 
-            if delta.content:
+            if content := delta.get("content"):
                 if last_role != "assistant":
                     yield {"role": "assistant"}
                     last_role = "assistant"
-                yield {"content": delta.content}
+                yield {"content": content}
 
-            if delta.tool_calls:
+            if tool_call_deltas := delta.get("tool_calls"):
                 if last_role != "assistant":
                     yield {"role": "assistant"}
                     last_role = "assistant"
-                for tool_call_delta in delta.tool_calls:
+                for tool_call_delta in tool_call_deltas:
+                    if not isinstance(tool_call_delta, dict):
+                        continue
                     tool_call = tool_calls.setdefault(
-                        tool_call_delta.index,
+                        int(tool_call_delta["index"]),
                         {"arguments": "", "id": "", "name": ""},
                     )
-                    if tool_call_delta.id:
-                        tool_call["id"] = tool_call_delta.id
-                    if tool_call_delta.function is None:
+                    if tool_call_id := tool_call_delta.get("id"):
+                        tool_call["id"] = str(tool_call_id)
+                    function_delta = tool_call_delta.get("function")
+                    if not isinstance(function_delta, dict):
                         continue
-                    if tool_call_delta.function.name:
-                        tool_call["name"] = tool_call_delta.function.name
-                    if tool_call_delta.function.arguments:
-                        tool_call["arguments"] += tool_call_delta.function.arguments
+                    if function_name := function_delta.get("name"):
+                        tool_call["name"] = str(function_name)
+                    if function_arguments := function_delta.get("arguments"):
+                        tool_call["arguments"] += str(function_arguments)
 
-            if choice.finish_reason == "tool_calls" and tool_calls:
+            if choice.get("finish_reason") == "tool_calls" and tool_calls:
                 yield {
                     "tool_calls": [
                         llm.ToolInput(
@@ -266,17 +339,18 @@ async def _transform_chat_completion_stream(
 
 def _add_chat_completion_usage_to_trace(
     chat_log: conversation.ChatLog,
-    completion: ChatCompletion,
+    completion: dict[str, Any],
 ) -> None:
     """Add Chat Completions token usage to the Home Assistant trace."""
-    if completion.usage is None:
+    usage = completion.get("usage")
+    if not isinstance(usage, dict):
         return
 
     chat_log.async_trace(
         {
             "stats": {
-                "input_tokens": completion.usage.prompt_tokens,
-                "output_tokens": completion.usage.completion_tokens,
+                "input_tokens": usage.get("prompt_tokens"),
+                "output_tokens": usage.get("completion_tokens"),
             }
         }
     )
@@ -287,6 +361,23 @@ def _model_for_structured_output(model: str) -> str:
     if model in GROQ_STRUCTURED_OUTPUT_MODEL_IDS:
         return model
     return RECOMMENDED_STRUCTURED_OUTPUT_MODEL
+
+
+def _assistant_content_from_completion(
+    entity_id: str,
+    completion: dict[str, Any],
+) -> conversation.AssistantContent:
+    """Return assistant content from a non-streaming Chat Completion."""
+    choices = completion.get("choices")
+    if not isinstance(choices, list) or not choices:
+        raise HomeAssistantError("Groq returned no choices")
+    first_choice = choices[0]
+    message = first_choice.get("message") if isinstance(first_choice, dict) else None
+    content = message.get("content") if isinstance(message, dict) else None
+    return conversation.AssistantContent(
+        agent_id=entity_id,
+        content=content if isinstance(content, str) else None,
+    )
 
 
 class GroqCloudBaseLLMEntity(Entity):
@@ -316,6 +407,15 @@ class GroqCloudBaseLLMEntity(Entity):
         max_iterations: int = MAX_TOOL_ITERATIONS,
     ) -> None:
         """Generate a Groq response for the given Home Assistant chat log."""
+        has_attachments = _chat_content_has_attachments(chat_log.content)
+        if has_attachments and structure:
+            raise HomeAssistantError(
+                "Groq structured output with image attachments is not supported"
+            )
+        if has_attachments:
+            await self._async_handle_vision_chat_log(chat_log)
+            return
+
         if structure and structure_name:
             await self._async_handle_structured_chat_log(
                 chat_log,
@@ -325,18 +425,24 @@ class GroqCloudBaseLLMEntity(Entity):
             return
 
         options = self.subentry.data
-        messages = _convert_content_to_chat_completion_param(chat_log.content)
-
-        model_args = CompletionCreateParamsStreaming(
-            max_completion_tokens=options.get(CONF_MAX_TOKENS, RECOMMENDED_MAX_TOKENS),
-            messages=messages,
-            model=options.get(CONF_CHAT_MODEL, RECOMMENDED_CHAT_MODEL),
-            stream=True,
-            stream_options={"include_usage": True},
-            temperature=options.get(CONF_TEMPERATURE, RECOMMENDED_TEMPERATURE),
-            top_p=options.get(CONF_TOP_P, RECOMMENDED_TOP_P),
-            user=chat_log.conversation_id,
+        messages = await _async_convert_content_to_chat_completion_param(
+            self.hass,
+            chat_log.content,
         )
+
+        model_args: dict[str, Any] = {
+            "max_completion_tokens": options.get(
+                CONF_MAX_TOKENS,
+                RECOMMENDED_MAX_TOKENS,
+            ),
+            "messages": messages,
+            "model": options.get(CONF_CHAT_MODEL, RECOMMENDED_CHAT_MODEL),
+            "stream": True,
+            "stream_options": {"include_usage": True},
+            "temperature": options.get(CONF_TEMPERATURE, RECOMMENDED_TEMPERATURE),
+            "top_p": options.get(CONF_TOP_P, RECOMMENDED_TOP_P),
+            "user": chat_log.conversation_id,
+        }
 
         if chat_log.llm_api:
             tools = [
@@ -347,11 +453,11 @@ class GroqCloudBaseLLMEntity(Entity):
                 model_args["tool_choice"] = "auto"
                 model_args["tools"] = tools
 
-        client = self.entry.runtime_data
+        client = self.entry.runtime_data.client
 
         for _iteration in range(max_iterations):
             try:
-                stream = await client.chat.completions.create(**model_args)
+                stream = client.async_stream_chat_completion(model_args)
                 content_stream = chat_log.async_add_delta_content_stream(
                     self.entity_id,
                     _transform_chat_completion_stream(chat_log, stream),
@@ -361,13 +467,13 @@ class GroqCloudBaseLLMEntity(Entity):
                         [content async for content in content_stream]
                     )
                 )
-            except openai.AuthenticationError as err:
+            except GroqAuthenticationError as err:
                 self.entry.async_start_reauth(self.hass)
                 raise HomeAssistantError("Authentication error with Groq") from err
-            except openai.RateLimitError as err:
+            except GroqRateLimitError as err:
                 LOGGER.error("Rate limited by Groq: %s", err)
                 raise HomeAssistantError("Rate limited or insufficient funds") from err
-            except openai.OpenAIError as err:
+            except GroqApiError as err:
                 LOGGER.error("Error talking to Groq: %s", err)
                 raise HomeAssistantError("Error talking to Groq") from err
 
@@ -375,6 +481,54 @@ class GroqCloudBaseLLMEntity(Entity):
                 break
         else:
             raise HomeAssistantError("Groq tool call limit reached")
+
+    async def _async_handle_vision_chat_log(
+        self,
+        chat_log: conversation.ChatLog,
+    ) -> None:
+        """Generate a Groq vision response for chat content with images."""
+        options = self.subentry.data
+        model = str(options.get(CONF_VISION_MODEL, RECOMMENDED_VISION_MODEL))
+        if not self.entry.runtime_data.model_registry.supports(
+            model,
+            GroqCapability.VISION,
+        ):
+            model = RECOMMENDED_VISION_MODEL
+
+        model_args: dict[str, Any] = {
+            "max_completion_tokens": options.get(
+                CONF_MAX_TOKENS,
+                RECOMMENDED_MAX_TOKENS,
+            ),
+            "messages": await _async_convert_content_to_chat_completion_param(
+                self.hass,
+                chat_log.content,
+            ),
+            "model": model,
+            "stream": False,
+            "temperature": options.get(CONF_TEMPERATURE, RECOMMENDED_TEMPERATURE),
+            "top_p": options.get(CONF_TOP_P, RECOMMENDED_TOP_P),
+            "user": chat_log.conversation_id,
+        }
+
+        client = self.entry.runtime_data.client
+
+        try:
+            completion = await client.async_chat_completion(model_args)
+        except GroqAuthenticationError as err:
+            self.entry.async_start_reauth(self.hass)
+            raise HomeAssistantError("Authentication error with Groq") from err
+        except GroqRateLimitError as err:
+            LOGGER.error("Rate limited by Groq: %s", err)
+            raise HomeAssistantError("Rate limited or insufficient funds") from err
+        except GroqApiError as err:
+            LOGGER.error("Error talking to Groq: %s", err)
+            raise HomeAssistantError("Error talking to Groq") from err
+
+        _add_chat_completion_usage_to_trace(chat_log, completion)
+        chat_log.async_add_assistant_content_without_tools(
+            _assistant_content_from_completion(self.entity_id, completion)
+        )
 
     async def _async_handle_structured_chat_log(
         self,
@@ -384,53 +538,50 @@ class GroqCloudBaseLLMEntity(Entity):
     ) -> None:
         """Generate a structured Groq response through Chat Completions."""
         options = self.subentry.data
-        model_args = CompletionCreateParamsNonStreaming(
-            max_completion_tokens=options.get(CONF_MAX_TOKENS, RECOMMENDED_MAX_TOKENS),
-            messages=_convert_content_to_chat_completion_param(chat_log.content),
-            model=_model_for_structured_output(
+        model_args: dict[str, Any] = {
+            "max_completion_tokens": options.get(
+                CONF_MAX_TOKENS,
+                RECOMMENDED_MAX_TOKENS,
+            ),
+            "messages": await _async_convert_content_to_chat_completion_param(
+                self.hass,
+                chat_log.content,
+            ),
+            "model": _model_for_structured_output(
                 options.get(CONF_CHAT_MODEL, RECOMMENDED_CHAT_MODEL)
             ),
-            response_format=cast(
-                "Any",
-                {
-                    "json_schema": {
-                        "name": slugify(structure_name),
-                        "schema": _format_structured_output(
-                            structure,
-                            chat_log.llm_api,
-                        ),
-                        "strict": True,
-                    },
-                    "type": "json_schema",
+            "response_format": {
+                "json_schema": {
+                    "name": slugify(structure_name),
+                    "schema": _format_structured_output(
+                        structure,
+                        chat_log.llm_api,
+                    ),
+                    "strict": True,
                 },
-            ),
-            stream=False,
-            temperature=options.get(CONF_TEMPERATURE, RECOMMENDED_TEMPERATURE),
-            top_p=options.get(CONF_TOP_P, RECOMMENDED_TOP_P),
-            user=chat_log.conversation_id,
-        )
+                "type": "json_schema",
+            },
+            "stream": False,
+            "temperature": options.get(CONF_TEMPERATURE, RECOMMENDED_TEMPERATURE),
+            "top_p": options.get(CONF_TOP_P, RECOMMENDED_TOP_P),
+            "user": chat_log.conversation_id,
+        }
 
-        client = self.entry.runtime_data
+        client = self.entry.runtime_data.client
 
         try:
-            completion = await client.chat.completions.create(**model_args)
-        except openai.AuthenticationError as err:
+            completion = await client.async_chat_completion(model_args)
+        except GroqAuthenticationError as err:
             self.entry.async_start_reauth(self.hass)
             raise HomeAssistantError("Authentication error with Groq") from err
-        except openai.RateLimitError as err:
+        except GroqRateLimitError as err:
             LOGGER.error("Rate limited by Groq: %s", err)
             raise HomeAssistantError("Rate limited or insufficient funds") from err
-        except openai.OpenAIError as err:
+        except GroqApiError as err:
             LOGGER.error("Error talking to Groq: %s", err)
             raise HomeAssistantError("Error talking to Groq") from err
 
         _add_chat_completion_usage_to_trace(chat_log, completion)
-        if not completion.choices:
-            raise HomeAssistantError("Groq returned no choices")
-
         chat_log.async_add_assistant_content_without_tools(
-            conversation.AssistantContent(
-                agent_id=self.entity_id,
-                content=completion.choices[0].message.content,
-            )
+            _assistant_content_from_completion(self.entity_id, completion)
         )

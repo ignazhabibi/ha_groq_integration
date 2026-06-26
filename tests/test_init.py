@@ -2,8 +2,6 @@
 
 from unittest.mock import AsyncMock, MagicMock, patch
 
-import httpx
-import openai
 import pytest
 from homeassistant.const import CONF_API_KEY, Platform
 from homeassistant.core import HomeAssistant
@@ -16,7 +14,11 @@ from custom_components.groq_cloud_conversation import (
     async_unload_entry,
     async_update_options,
 )
-from custom_components.groq_cloud_conversation.const import DOMAIN, GROQ_BASE_URL
+from custom_components.groq_cloud_conversation.api import (
+    GroqApiError,
+    GroqAuthenticationError,
+)
+from custom_components.groq_cloud_conversation.const import DOMAIN
 
 
 def _make_entry() -> MockConfigEntry:
@@ -28,13 +30,6 @@ def _make_entry() -> MockConfigEntry:
     )
 
 
-def _auth_error() -> openai.AuthenticationError:
-    """Return a reusable OpenAI authentication error."""
-    request = httpx.Request("GET", "https://api.groq.com/openai/v1/models")
-    response = httpx.Response(401, request=request)
-    return openai.AuthenticationError("invalid key", response=response, body=None)
-
-
 async def test_setup_entry_creates_client_and_forwards_platforms(
     hass: HomeAssistant,
 ) -> None:
@@ -42,11 +37,11 @@ async def test_setup_entry_creates_client_and_forwards_platforms(
     entry = _make_entry()
     entry.add_to_hass(hass)
     client = MagicMock()
-    client.models.list = AsyncMock(return_value=None)
+    client.async_list_models = AsyncMock(return_value=[])
 
     with (
         patch(
-            "custom_components.groq_cloud_conversation.openai.AsyncOpenAI",
+            "custom_components.groq_cloud_conversation.GroqApiClient",
             return_value=client,
         ) as mock_client,
         patch.object(
@@ -57,34 +52,33 @@ async def test_setup_entry_creates_client_and_forwards_platforms(
     ):
         assert await async_setup_entry(hass, entry)
 
-    assert entry.runtime_data is client
+    assert entry.runtime_data.client is client
     assert mock_client.call_args.kwargs["api_key"] == "groq-key"
-    assert str(mock_client.call_args.kwargs["base_url"]) == GROQ_BASE_URL
-    client.models.list.assert_awaited_once_with(timeout=10.0)
+    client.async_list_models.assert_awaited_once_with(request_timeout=10.0)
     forward_setups.assert_awaited_once_with(entry, PLATFORMS)
 
 
 @pytest.mark.parametrize(
     ("setup_error", "expected_exception"),
     [
-        (_auth_error(), ConfigEntryAuthFailed),
-        (openai.OpenAIError("boom"), ConfigEntryNotReady),
+        (GroqAuthenticationError("invalid key"), ConfigEntryAuthFailed),
+        (GroqApiError("boom"), ConfigEntryNotReady),
     ],
 )
 async def test_setup_entry_maps_validation_errors(
     hass: HomeAssistant,
-    setup_error: openai.OpenAIError,
+    setup_error: GroqApiError,
     expected_exception: type[Exception],
 ) -> None:
     """Test setup maps Groq validation errors to config entry errors."""
     entry = _make_entry()
     entry.add_to_hass(hass)
     client = MagicMock()
-    client.models.list = AsyncMock(side_effect=setup_error)
+    client.async_list_models = AsyncMock(side_effect=setup_error)
 
     with (
         patch(
-            "custom_components.groq_cloud_conversation.openai.AsyncOpenAI",
+            "custom_components.groq_cloud_conversation.GroqApiClient",
             return_value=client,
         ),
         pytest.raises(expected_exception),
@@ -124,4 +118,9 @@ async def test_options_update_reloads_entry(hass: HomeAssistant) -> None:
 
 def test_platforms_include_stt() -> None:
     """Test setup forwards all supported platforms."""
-    assert PLATFORMS == (Platform.AI_TASK, Platform.CONVERSATION, Platform.STT)
+    assert PLATFORMS == (
+        Platform.AI_TASK,
+        Platform.CONVERSATION,
+        Platform.STT,
+        Platform.TTS,
+    )

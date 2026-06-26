@@ -47,10 +47,12 @@
             "chat_model": "Modell",
             "max_tokens": "Maximalzahl Token in der Antwort",
             "temperature": "Temperatur",
-            "top_p": "Top P"
+            "top_p": "Top P",
+            "vision_model": "Vision-Modell"
           },
           "data_description": {
-            "chat_model": "Groq-Modelle f\u00fcr Chat Completions mit Unterst\u00fctzung f\u00fcr Structured Outputs."
+            "chat_model": "Groq-Modelle f\u00fcr Chat Completions mit Unterst\u00fctzung f\u00fcr Structured Outputs.",
+            "vision_model": "Multimodales Groq-Modell, das verwendet wird, wenn ein KI-Task Bildanh\u00e4nge enth\u00e4lt."
           },
           "title": "Erweiterte Einstellungen"
         },
@@ -117,6 +119,39 @@
           "data_description": {
             "prompt": "Optionaler Kontext zur Verbesserung der Smart-Home-Transkription.",
             "stt_model": "Groq-Whisper-Modell f\u00fcr Audiotranskription."
+          },
+          "title": "Erweiterte Einstellungen"
+        },
+        "init": {
+          "data": {
+            "name": "Name",
+            "recommended": "Empfohlene Modelleinstellungen"
+          }
+        }
+      }
+    },
+    "tts": {
+      "abort": {
+        "entry_not_loaded": "Es k\u00f6nnen keine Dinge hinzugef\u00fcgt werden, wenn die Konfiguration deaktiviert ist.",
+        "reconfigure_successful": "Die Neukonfiguration war erfolgreich"
+      },
+      "entry_type": "Text-to-Speech",
+      "error": {
+        "unsupported_voice": "Die ausgew\u00e4hlte Stimme wird vom ausgew\u00e4hlten Modell nicht unterst\u00fctzt."
+      },
+      "initiate_flow": {
+        "reconfigure": "Text-to-Speech neu konfigurieren",
+        "user": "Text-to-Speech hinzuf\u00fcgen"
+      },
+      "step": {
+        "advanced": {
+          "data": {
+            "tts_model": "Modell",
+            "tts_voice": "Stimme"
+          },
+          "data_description": {
+            "tts_model": "Groq-Orpheus-Modell f\u00fcr Text-to-Speech-Audio.",
+            "tts_voice": "Groq-Orpheus-Stimmenprofil."
           },
           "title": "Erweiterte Einstellungen"
         },

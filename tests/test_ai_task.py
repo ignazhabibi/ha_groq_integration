@@ -41,6 +41,13 @@ def _make_entity() -> GroqCloudTaskEntity:
     return entity
 
 
+def test_ai_task_entity_supports_attachments() -> None:
+    """Test the AI task entity advertises image attachment support."""
+    entity = _make_entity()
+
+    assert entity.supported_features & ai_task.AITaskEntityFeature.SUPPORT_ATTACHMENTS
+
+
 async def _generate_with_response(
     hass: HomeAssistant,
     monkeypatch: pytest.MonkeyPatch,
