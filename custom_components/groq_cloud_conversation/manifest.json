@@ -8,5 +8,5 @@
   "documentation": "https://github.com/ignazhabibi/ha_groq_integration",
   "integration_type": "service",
   "iot_class": "cloud_polling",
-  "version": "0.1.2"
+  "version": "0.2.0"
 }
