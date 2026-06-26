@@ -1,6 +1,5 @@
 """The Groq Cloud Conversation integration."""
 
-import openai
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import CONF_API_KEY, Platform
 from homeassistant.core import HomeAssistant
@@ -9,20 +8,26 @@ from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers.httpx_client import get_async_client
 from homeassistant.helpers.typing import ConfigType
 
-from .const import DOMAIN, GROQ_BASE_URL
+from .api import GroqApiClient, GroqApiError, GroqAuthenticationError
+from .const import DOMAIN
+from .model_registry import GroqModelRegistry
+from .runtime import GroqCloudRuntimeData
+from .services import async_setup_services
 
 PLATFORMS: tuple[Platform, ...] = (
     Platform.AI_TASK,
     Platform.CONVERSATION,
     Platform.STT,
+    Platform.TTS,
 )
 CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
 
-type GroqCloudConfigEntry = ConfigEntry[openai.AsyncClient]
+type GroqCloudConfigEntry = ConfigEntry[GroqCloudRuntimeData]
 
 
-async def async_setup(_hass: HomeAssistant, _config: ConfigType) -> bool:
+async def async_setup(hass: HomeAssistant, _config: ConfigType) -> bool:
     """Set up Groq Cloud Conversation."""
+    async_setup_services(hass)
     return True
 
 
@@ -31,20 +36,23 @@ async def async_setup_entry(
     entry: GroqCloudConfigEntry,
 ) -> bool:
     """Set up Groq Cloud Conversation from a config entry."""
-    client = openai.AsyncOpenAI(
+    async_setup_services(hass)
+    client = GroqApiClient(
         api_key=entry.data[CONF_API_KEY],
-        base_url=GROQ_BASE_URL,
         http_client=get_async_client(hass),
     )
 
     try:
-        await client.models.list(timeout=10.0)
-    except openai.AuthenticationError as err:
+        models = await client.async_list_models(request_timeout=10.0)
+    except GroqAuthenticationError as err:
         raise ConfigEntryAuthFailed(err) from err
-    except openai.OpenAIError as err:
+    except GroqApiError as err:
         raise ConfigEntryNotReady(err) from err
 
-    entry.runtime_data = client
+    entry.runtime_data = GroqCloudRuntimeData(
+        client=client,
+        model_registry=GroqModelRegistry(models),
+    )
 
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     entry.async_on_unload(entry.add_update_listener(async_update_options))

@@ -4,17 +4,16 @@ import io
 import logging
 import wave
 from collections.abc import AsyncIterable
-from typing import TYPE_CHECKING, Final, cast
+from typing import TYPE_CHECKING, Final
 
-import openai
 from homeassistant.components import stt
 from homeassistant.config_entries import ConfigSubentry
 from homeassistant.const import CONF_PROMPT
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
-from openai.types.audio import Transcription
 
+from .api import GroqApiError, GroqAuthenticationError, GroqTranscriptionRequest
 from .const import (
     CONF_STT_MODEL,
     DEFAULT_STT_PROMPT,
@@ -182,29 +181,28 @@ class GroqCloudSTTEntity(stt.SpeechToTextEntity):
         if metadata.format == stt.AudioFormats.WAV:
             audio_data = _add_wav_header(metadata, audio_data)
 
-        client = self.entry.runtime_data
+        client = self.entry.runtime_data.client
         options = self.subentry.data
 
         try:
-            response = cast(
-                "Transcription",
-                await client.audio.transcriptions.create(
-                    file=(f"a.{metadata.format.value}", audio_data),
+            text = await client.async_transcribe_audio(
+                GroqTranscriptionRequest(
+                    audio=audio_data,
+                    filename=f"a.{metadata.format.value}",
                     language=metadata.language.split("-")[0],
                     model=options.get(CONF_STT_MODEL, RECOMMENDED_STT_MODEL),
                     prompt=options.get(CONF_PROMPT, DEFAULT_STT_PROMPT),
-                    response_format="json",
-                ),
+                )
             )
-        except openai.AuthenticationError:
+        except GroqAuthenticationError:
             self.entry.async_start_reauth(self.hass)
             _LOGGER.exception("Authentication error during Groq STT")
-        except openai.OpenAIError:
+        except GroqApiError:
             _LOGGER.exception("Error during Groq STT")
         else:
-            if response.text:
+            if text:
                 return stt.SpeechResult(
-                    response.text,
+                    text,
                     stt.SpeechResultState.SUCCESS,
                 )
 

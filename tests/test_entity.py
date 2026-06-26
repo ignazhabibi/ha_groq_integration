@@ -1,13 +1,11 @@
 """Tests for the shared Groq Cloud LLM entity adapter."""
 
 from collections.abc import AsyncIterator
-from http import HTTPStatus
+from pathlib import Path
 from types import MappingProxyType
 from typing import Any, TypeVar, cast
 from unittest.mock import AsyncMock, MagicMock
 
-import httpx
-import openai
 import pytest
 import voluptuous as vol
 from homeassistant.components import conversation
@@ -16,23 +14,17 @@ from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import llm
 from homeassistant.util.json import JsonObjectType
-from openai.types.chat import ChatCompletion, ChatCompletionChunk
-from openai.types.chat.chat_completion import Choice as ChatChoice
-from openai.types.chat.chat_completion_chunk import (
-    Choice as ChunkChoice,
-)
-from openai.types.chat.chat_completion_chunk import (
-    ChoiceDelta,
-    ChoiceDeltaToolCall,
-    ChoiceDeltaToolCallFunction,
-)
-from openai.types.chat.chat_completion_message import ChatCompletionMessage
-from openai.types.completion_usage import CompletionUsage
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 from custom_components.groq_cloud_conversation import GroqCloudConfigEntry
+from custom_components.groq_cloud_conversation.api import (
+    GroqApiError,
+    GroqAuthenticationError,
+    GroqRateLimitError,
+)
 from custom_components.groq_cloud_conversation.const import (
     CONF_CHAT_MODEL,
+    CONF_VISION_MODEL,
     DOMAIN,
     RECOMMENDED_CHAT_MODEL,
     RECOMMENDED_CONVERSATION_OPTIONS,
@@ -43,8 +35,11 @@ from custom_components.groq_cloud_conversation.const import (
 )
 from custom_components.groq_cloud_conversation.entity import (
     GroqCloudBaseLLMEntity,
+    _async_convert_content_to_chat_completion_param,
     _convert_content_to_chat_completion_param,
 )
+from custom_components.groq_cloud_conversation.model_registry import GroqModelRegistry
+from custom_components.groq_cloud_conversation.runtime import GroqCloudRuntimeData
 
 StreamEventT = TypeVar("StreamEventT")
 
@@ -105,106 +100,114 @@ class EchoTool(llm.Tool):
         return {"value": tool_input.tool_args["value"]}
 
 
-def _chat_message_chunks(text: str) -> list[ChatCompletionChunk]:
+def _chat_message_chunks(text: str) -> list[dict[str, Any]]:
     """Return fake Chat Completions chunks for an assistant text response."""
     return [
-        ChatCompletionChunk.model_construct(
-            id="chatcmpl_1",
-            choices=[
-                ChunkChoice.model_construct(
-                    delta=ChoiceDelta.model_construct(
-                        content=text,
-                        role="assistant",
-                    ),
-                    finish_reason="stop",
-                    index=0,
-                )
+        {
+            "choices": [
+                {
+                    "delta": {
+                        "content": text,
+                        "role": "assistant",
+                    },
+                    "finish_reason": "stop",
+                    "index": 0,
+                }
             ],
-            created=0,
-            model=RECOMMENDED_CHAT_MODEL,
-            object="chat.completion.chunk",
-        )
+            "id": "chatcmpl_1",
+            "model": RECOMMENDED_CHAT_MODEL,
+            "object": "chat.completion.chunk",
+        }
     ]
 
 
 def _chat_tool_call_chunks(
     arguments: str = '{"value": "lamp"}',
-) -> list[ChatCompletionChunk]:
+) -> list[dict[str, Any]]:
     """Return fake Chat Completions chunks for a function tool call."""
     return [
-        ChatCompletionChunk.model_construct(
-            id="chatcmpl_1",
-            choices=[
-                ChunkChoice.model_construct(
-                    delta=ChoiceDelta.model_construct(
-                        role="assistant",
-                        tool_calls=[
-                            ChoiceDeltaToolCall.model_construct(
-                                function=ChoiceDeltaToolCallFunction.model_construct(
-                                    arguments="",
-                                    name="Echo",
-                                ),
-                                id="call_1",
-                                index=0,
-                                type="function",
-                            )
+        {
+            "choices": [
+                {
+                    "delta": {
+                        "role": "assistant",
+                        "tool_calls": [
+                            {
+                                "function": {
+                                    "arguments": "",
+                                    "name": "Echo",
+                                },
+                                "id": "call_1",
+                                "index": 0,
+                                "type": "function",
+                            }
                         ],
-                    ),
-                    finish_reason=None,
-                    index=0,
-                )
+                    },
+                    "finish_reason": None,
+                    "index": 0,
+                }
             ],
-            created=0,
-            model=RECOMMENDED_CHAT_MODEL,
-            object="chat.completion.chunk",
-        ),
-        ChatCompletionChunk.model_construct(
-            id="chatcmpl_1",
-            choices=[
-                ChunkChoice.model_construct(
-                    delta=ChoiceDelta.model_construct(
-                        tool_calls=[
-                            ChoiceDeltaToolCall.model_construct(
-                                function=ChoiceDeltaToolCallFunction.model_construct(
-                                    arguments=arguments,
-                                ),
-                                index=0,
-                            )
+            "id": "chatcmpl_1",
+            "model": RECOMMENDED_CHAT_MODEL,
+            "object": "chat.completion.chunk",
+        },
+        {
+            "choices": [
+                {
+                    "delta": {
+                        "tool_calls": [
+                            {
+                                "function": {
+                                    "arguments": arguments,
+                                },
+                                "index": 0,
+                            }
                         ],
-                    ),
-                    finish_reason="tool_calls",
-                    index=0,
-                )
+                    },
+                    "finish_reason": "tool_calls",
+                    "index": 0,
+                }
             ],
-            created=0,
-            model=RECOMMENDED_CHAT_MODEL,
-            object="chat.completion.chunk",
-        ),
+            "id": "chatcmpl_1",
+            "model": RECOMMENDED_CHAT_MODEL,
+            "object": "chat.completion.chunk",
+        },
     ]
 
 
-def _chat_completion(text: str) -> ChatCompletion:
+def _chat_completion(text: str) -> dict[str, Any]:
     """Return a fake non-streaming Chat Completion response."""
-    return ChatCompletion.model_construct(
-        id="chatcmpl_1",
-        choices=[
-            ChatChoice.model_construct(
-                finish_reason="stop",
-                index=0,
-                message=ChatCompletionMessage.model_construct(
-                    content=text,
-                    role="assistant",
-                ),
-            )
+    return {
+        "choices": [
+            {
+                "finish_reason": "stop",
+                "index": 0,
+                "message": {
+                    "content": text,
+                    "role": "assistant",
+                },
+            }
         ],
-        created=0,
-        model=RECOMMENDED_CHAT_MODEL,
-        object="chat.completion",
-        usage=CompletionUsage.model_construct(
-            completion_tokens=3,
-            prompt_tokens=7,
-            total_tokens=10,
-        ),
+        "id": "chatcmpl_1",
+        "model": RECOMMENDED_CHAT_MODEL,
+        "object": "chat.completion",
+        "usage": {
+            "completion_tokens": 3,
+            "prompt_tokens": 7,
+            "total_tokens": 10,
+        },
+    }
+
+
+def _image_attachment(
+    path: Path,
+    mime_type: str = "image/png",
+) -> conversation.Attachment:
+    """Return a fake image attachment for vision tests."""
+    return conversation.Attachment(
+        media_content_id="media-source://media_source/local/image.png",
+        mime_type=mime_type,
+        path=path,
     )
 
 
@@ -228,7 +231,10 @@ def _make_subentry(
 def _make_entity(client: MagicMock, subentry: ConfigSubentry) -> DummyLLMEntity:
     """Create a test entity with fake Groq runtime data."""
     entry = MockConfigEntry(domain=DOMAIN, data={}, title="Groq Cloud")
-    entry.runtime_data = client
+    entry.runtime_data = GroqCloudRuntimeData(
+        client=client,
+        model_registry=GroqModelRegistry(),
+    )
     entity = DummyLLMEntity(cast("GroqCloudConfigEntry", entry), subentry)
     entity.entity_id = "conversation.groq_cloud"
     return entity
@@ -239,17 +245,6 @@ def _make_chat_log(hass: HomeAssistant) -> conversation.ChatLog:
     chat_log = conversation.ChatLog(hass, "conversation-id")
     chat_log.async_add_user_content(conversation.UserContent("Hello"))
     return chat_log
-
-
-def _make_openai_response(status_code: HTTPStatus) -> httpx.Response:
-    """Create an HTTPX response for OpenAI status errors."""
-    return httpx.Response(
-        status_code,
-        request=httpx.Request(
-            "POST",
-            "https://api.groq.com/openai/v1/chat/completions",
-        ),
-    )
 
 
 async def _handle_chat_log_for_error_case(
@@ -291,8 +286,7 @@ def test_convert_content_to_chat_completion_input() -> None:
         ),
     ]
 
-    messages = _convert_content_to_chat_completion_param(content)
-    message_dicts = cast("list[dict[str, Any]]", messages)
+    message_dicts = _convert_content_to_chat_completion_param(content)
 
     assert message_dicts[0]["role"] == "system"
     assert message_dicts[1]["role"] == "user"
@@ -305,8 +299,8 @@ def test_convert_content_to_chat_completion_input() -> None:
 async def test_handle_chat_log_streams_text(hass: HomeAssistant) -> None:
     """Test streamed text deltas are added to the Home Assistant chat log."""
     client = MagicMock()
-    client.chat.completions.create = AsyncMock(
-        return_value=FakeStream(_chat_message_chunks("Hi"))
+    client.async_stream_chat_completion = MagicMock(
+        return_value=FakeStream(_chat_message_chunks("Hi")),
     )
     entity = _make_entity(client, _make_subentry())
     chat_log = _make_chat_log(hass)
@@ -315,8 +309,8 @@ async def test_handle_chat_log_streams_text(hass: HomeAssistant) -> None:
 
     assert isinstance(chat_log.content[-1], conversation.AssistantContent)
     assert chat_log.content[-1].content == "Hi"
-    client.chat.completions.create.assert_awaited_once()
-    request = client.chat.completions.create.call_args.kwargs
+    client.async_stream_chat_completion.assert_called_once()
+    request = client.async_stream_chat_completion.call_args.args[0]
     assert request["model"] == RECOMMENDED_CHAT_MODEL
     assert request["max_completion_tokens"] == RECOMMENDED_MAX_TOKENS
     assert request["temperature"] == RECOMMENDED_TEMPERATURE
@@ -324,12 +318,126 @@ async def test_handle_chat_log_streams_text(hass: HomeAssistant) -> None:
     assert "tools" not in request
 
 
+async def test_convert_user_content_with_image_attachment(
+    hass: HomeAssistant,
+    tmp_path: Path,
+) -> None:
+    """Test image attachments are converted to Groq vision message parts."""
+    image_path = tmp_path / "image.png"
+    image_path.write_bytes(b"image-bytes")
+    content = conversation.UserContent(
+        "Describe this.",
+        attachments=[_image_attachment(image_path)],
+    )
+
+    messages = await _async_convert_content_to_chat_completion_param(hass, [content])
+
+    assert messages == [
+        {
+            "content": [
+                {"text": "Describe this.", "type": "text"},
+                {
+                    "image_url": {"url": "data:image/png;base64,aW1hZ2UtYnl0ZXM="},
+                    "type": "image_url",
+                },
+            ],
+            "role": "user",
+        }
+    ]
+
+
+async def test_convert_user_content_rejects_non_image_attachment(
+    hass: HomeAssistant,
+    tmp_path: Path,
+) -> None:
+    """Test non-image attachments fail before calling Groq."""
+    file_path = tmp_path / "document.txt"
+    file_path.write_text("not an image")
+    content = conversation.UserContent(
+        "Describe this.",
+        attachments=[_image_attachment(file_path, "text/plain")],
+    )
+
+    with pytest.raises(HomeAssistantError, match="attachments must be images"):
+        await _async_convert_content_to_chat_completion_param(hass, [content])
+
+
+async def test_handle_chat_log_uses_vision_model_for_image_attachments(
+    hass: HomeAssistant,
+    tmp_path: Path,
+) -> None:
+    """Test image attachments use a non-streaming Groq vision request."""
+    image_path = tmp_path / "image.png"
+    image_path.write_bytes(b"image")
+    client = MagicMock()
+    client.async_chat_completion = AsyncMock(return_value=_chat_completion("A lamp."))
+    entity = _make_entity(
+        client,
+        _make_subentry(
+            {
+                CONF_VISION_MODEL: "qwen/qwen3.6-27b",
+            },
+            subentry_type="ai_task_data",
+        ),
+    )
+    entity.hass = hass
+    chat_log = conversation.ChatLog(hass, "conversation-id")
+    chat_log.async_add_user_content(
+        conversation.UserContent(
+            "What is shown?",
+            attachments=[_image_attachment(image_path)],
+        )
+    )
+
+    await entity._async_handle_chat_log(chat_log)
+
+    client.async_chat_completion.assert_awaited_once()
+    request = client.async_chat_completion.call_args.args[0]
+    assert request["model"] == "qwen/qwen3.6-27b"
+    assert request["stream"] is False
+    assert request["messages"][0]["content"][0] == {
+        "text": "What is shown?",
+        "type": "text",
+    }
+    assert request["messages"][0]["content"][1] == {
+        "image_url": {"url": "data:image/png;base64,aW1hZ2U="},
+        "type": "image_url",
+    }
+    assert isinstance(chat_log.content[-1], conversation.AssistantContent)
+    assert chat_log.content[-1].content == "A lamp."
+
+
+async def test_handle_chat_log_rejects_structured_output_with_image_attachments(
+    hass: HomeAssistant,
+    tmp_path: Path,
+) -> None:
+    """Test structured outputs with images fail clearly."""
+    image_path = tmp_path / "image.png"
+    image_path.write_bytes(b"image")
+    entity = _make_entity(MagicMock(), _make_subentry(subentry_type="ai_task_data"))
+    entity.hass = hass
+    chat_log = conversation.ChatLog(hass, "conversation-id")
+    chat_log.async_add_user_content(
+        conversation.UserContent(
+            "Extract data.",
+            attachments=[_image_attachment(image_path)],
+        )
+    )
+
+    with pytest.raises(HomeAssistantError, match="image attachments"):
+        await entity._async_handle_chat_log(
+            chat_log,
+            structure=vol.Schema({vol.Required("value"): str}),
+            structure_name="Extract data",
+        )
+
+
 async def test_handle_chat_log_runs_ha_tool_round_trip(
     hass: HomeAssistant,
 ) -> None:
     """Test Groq function calls are executed through a Home Assistant LLM API."""
     client = MagicMock()
-    client.chat.completions.create = AsyncMock(
+    client.async_stream_chat_completion = MagicMock(
         side_effect=[
             FakeStream(_chat_tool_call_chunks()),
             FakeStream(_chat_message_chunks("Done")),
@@ -353,9 +461,9 @@ async def test_handle_chat_log_runs_ha_tool_round_trip(
 
     await entity._async_handle_chat_log(chat_log)
 
-    assert client.chat.completions.create.await_count == 2
-    first_request = client.chat.completions.create.await_args_list[0].kwargs
-    second_request = client.chat.completions.create.await_args_list[1].kwargs
+    assert client.async_stream_chat_completion.call_count == 2
+    first_request = client.async_stream_chat_completion.call_args_list[0].args[0]
+    second_request = client.async_stream_chat_completion.call_args_list[1].args[0]
     assert first_request["tools"][0]["function"]["name"] == "Echo"
     assert any(
         message["role"] == "tool" and message["tool_call_id"] == "call_1"
@@ -370,8 +478,8 @@ async def test_handle_chat_log_rejects_malformed_tool_arguments(
 ) -> None:
     """Test malformed Groq tool arguments fail as a Home Assistant error."""
     client = MagicMock()
-    client.chat.completions.create = AsyncMock(
-        return_value=FakeStream(_chat_tool_call_chunks("{not-json"))
+    client.async_stream_chat_completion = MagicMock(
+        return_value=FakeStream(_chat_tool_call_chunks("{not-json")),
     )
     entity = _make_entity(client, _make_subentry())
     chat_log = _make_chat_log(hass)
@@ -398,7 +506,7 @@ async def test_handle_chat_log_uses_chat_completions_structured_output(
 ) -> None:
     """Test structured responses use non-streaming Chat Completions."""
     client = MagicMock()
-    client.chat.completions.create = AsyncMock(
+    client.async_chat_completion = AsyncMock(
         return_value=_chat_completion('{"value": "ok"}')
     )
     entity = _make_entity(client, _make_subentry())
@@ -410,8 +518,8 @@ async def test_handle_chat_log_uses_chat_completions_structured_output(
         structure_name="Extract data",
     )
 
-    client.chat.completions.create.assert_awaited_once()
-    request = client.chat.completions.create.call_args.kwargs
+    client.async_chat_completion.assert_awaited_once()
+    request = client.async_chat_completion.call_args.args[0]
     assert request["model"] == RECOMMENDED_STRUCTURED_OUTPUT_MODEL
     assert request["stream"] is False
     assert request["response_format"]["type"] == "json_schema"
@@ -427,7 +535,7 @@ async def test_handle_chat_log_keeps_supported_structured_output_model(
 ) -> None:
     """Test structured output honors a configured compatible Groq model."""
     client = MagicMock()
-    client.chat.completions.create = AsyncMock(
+    client.async_chat_completion = AsyncMock(
         return_value=_chat_completion('{"value": "ok"}')
     )
     entity = _make_entity(
@@ -442,7 +550,7 @@ async def test_handle_chat_log_keeps_supported_structured_output_model(
         structure_name="Extract data",
     )
 
-    request = client.chat.completions.create.call_args.kwargs
+    request = client.async_chat_completion.call_args.args[0]
     assert request["model"] == "openai/gpt-oss-120b"
 
 
@@ -451,7 +559,7 @@ async def test_handle_chat_log_enforces_tool_iteration_cap(
 ) -> None:
     """Test tool loops fail after the configured iteration cap."""
     client = MagicMock()
-    client.chat.completions.create = AsyncMock(
+    client.async_stream_chat_completion = MagicMock(
         side_effect=[
             FakeStream(_chat_tool_call_chunks()),
             FakeStream(_chat_tool_call_chunks('{"value": "second"}')),
@@ -476,7 +584,7 @@ async def test_handle_chat_log_enforces_tool_iteration_cap(
     with pytest.raises(HomeAssistantError, match="tool call limit"):
         await entity._async_handle_chat_log(chat_log, max_iterations=2)
 
-    assert client.chat.completions.create.await_count == 2
+    assert client.async_stream_chat_completion.call_count == 2
 
 
 @pytest.mark.parametrize("is_structured", [False, True])
@@ -484,20 +592,12 @@ async def test_handle_chat_log_enforces_tool_iteration_cap(
     "error_case",
     [
         (
-            openai.RateLimitError(
-                "Rate limited",
-                response=_make_openai_response(HTTPStatus.TOO_MANY_REQUESTS),
-                body=None,
-            ),
+            GroqRateLimitError("Rate limited"),
             "Rate limited or insufficient funds",
             False,
         ),
         (
-            openai.AuthenticationError(
-                "Invalid API key",
-                response=_make_openai_response(HTTPStatus.UNAUTHORIZED),
-                body=None,
-            ),
+            GroqAuthenticationError("Invalid API key"),
             "Authentication error with Groq",
             True,
         ),
@@ -507,12 +607,13 @@ async def test_handle_chat_log_maps_groq_status_errors(
     hass: HomeAssistant,
     monkeypatch: pytest.MonkeyPatch,
     is_structured: bool,
-    error_case: tuple[openai.APIStatusError, str, bool],
+    error_case: tuple[GroqApiError, str, bool],
 ) -> None:
     """Test Groq status errors are exposed as Home Assistant errors."""
     exception, message, should_start_reauth = error_case
     client = MagicMock()
-    client.chat.completions.create = AsyncMock(side_effect=exception)
+    client.async_chat_completion = AsyncMock(side_effect=exception)
+    client.async_stream_chat_completion = MagicMock(side_effect=exception)
     entity = _make_entity(client, _make_subentry())
     entity.hass = hass
     chat_log = _make_chat_log(hass)

@@ -3,26 +3,28 @@
 import io
 import wave
 from collections.abc import AsyncIterator
-from http import HTTPStatus
 from types import MappingProxyType
 from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock
 
-import httpx
-import openai
 from homeassistant.components import stt
 from homeassistant.config_entries import ConfigSubentry
 from homeassistant.const import CONF_API_KEY, CONF_PROMPT
 from homeassistant.core import HomeAssistant
-from openai.types.audio import Transcription
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 from custom_components.groq_cloud_conversation import GroqCloudConfigEntry
+from custom_components.groq_cloud_conversation.api import (
+    GroqApiError,
+    GroqAuthenticationError,
+)
 from custom_components.groq_cloud_conversation.const import (
     CONF_STT_MODEL,
     DOMAIN,
     RECOMMENDED_STT_MODEL,
 )
+from custom_components.groq_cloud_conversation.model_registry import GroqModelRegistry
+from custom_components.groq_cloud_conversation.runtime import GroqCloudRuntimeData
 from custom_components.groq_cloud_conversation.stt import (
     GroqCloudSTTEntity,
     async_setup_entry,
@@ -71,19 +73,11 @@ def _entity(
         data={CONF_API_KEY: "groq-key"},
         title="Groq Cloud",
     )
-    entry.runtime_data = client
-    return GroqCloudSTTEntity(cast("GroqCloudConfigEntry", entry), _subentry(data))
-
-
-def _openai_response(status_code: HTTPStatus) -> httpx.Response:
-    """Create an HTTPX response for OpenAI status errors."""
-    return httpx.Response(
-        status_code,
-        request=httpx.Request(
-            "POST",
-            "https://api.groq.com/openai/v1/audio/transcriptions",
-        ),
+    entry.runtime_data = GroqCloudRuntimeData(
+        client=client,
+        model_registry=GroqModelRegistry(),
     )
+    return GroqCloudSTTEntity(cast("GroqCloudConfigEntry", entry), _subentry(data))
 
 
 async def test_setup_entry_adds_entities_for_stt_subentries(
@@ -140,9 +134,7 @@ def test_stt_entity_reports_supported_metadata() -> None:
 async def test_process_wav_stream_adds_header_and_transcribes() -> None:
     """Test WAV metadata produces a WAV upload for Groq transcription."""
     client = MagicMock()
-    client.audio.transcriptions.create = AsyncMock(
-        return_value=Transcription.model_construct(text="Licht an")
-    )
+    client.async_transcribe_audio = AsyncMock(return_value="Licht an")
     entity = _entity(
         client,
         {
@@ -158,15 +150,14 @@ async def test_process_wav_stream_adds_header_and_transcribes() -> None:
 
     assert result.result is stt.SpeechResultState.SUCCESS
     assert result.text == "Licht an"
-    client.audio.transcriptions.create.assert_awaited_once()
-    request = client.audio.transcriptions.create.call_args.kwargs
-    assert request["model"] == "whisper-large-v3"
-    assert request["language"] == "de"
-    assert request["prompt"] == "Smart home context"
-    assert request["response_format"] == "json"
-    assert request["file"][0] == "a.wav"
+    client.async_transcribe_audio.assert_awaited_once()
+    request = client.async_transcribe_audio.call_args.args[0]
+    assert request.model == "whisper-large-v3"
+    assert request.language == "de"
+    assert request.prompt == "Smart home context"
+    assert request.filename == "a.wav"
 
-    with wave.open(io.BytesIO(request["file"][1]), "rb") as wav_file:
+    with wave.open(io.BytesIO(request.audio), "rb") as wav_file:
         assert wav_file.getnchannels() == 1
         assert wav_file.getsampwidth() == 2
         assert wav_file.getframerate() == 16000
@@ -176,9 +167,7 @@ async def test_process_wav_stream_adds_header_and_transcribes() -> None:
 async def test_process_ogg_stream_sends_raw_audio() -> None:
     """Test OGG metadata sends the input bytes without WAV wrapping."""
     client = MagicMock()
-    client.audio.transcriptions.create = AsyncMock(
-        return_value=Transcription.model_construct(text="Hallo")
-    )
+    client.async_transcribe_audio = AsyncMock(return_value="Hallo")
     entity = _entity(client)
 
     result = await entity.async_process_audio_stream(
@@ -187,17 +176,16 @@ async def test_process_ogg_stream_sends_raw_audio() -> None:
     )
 
     assert result.result is stt.SpeechResultState.SUCCESS
-    request = client.audio.transcriptions.create.call_args.kwargs
-    assert request["file"] == ("a.ogg", b"oggdata")
-    assert request["model"] == RECOMMENDED_STT_MODEL
+    request = client.async_transcribe_audio.call_args.args[0]
+    assert request.filename == "a.ogg"
+    assert request.audio == b"oggdata"
+    assert request.model == RECOMMENDED_STT_MODEL
 
 
 async def test_process_stream_returns_error_for_empty_transcription() -> None:
     """Test an empty Groq transcription is returned as an STT error."""
     client = MagicMock()
-    client.audio.transcriptions.create = AsyncMock(
-        return_value=Transcription.model_construct(text="")
-    )
+    client.async_transcribe_audio = AsyncMock(return_value="")
     entity = _entity(client)
 
     result = await entity.async_process_audio_stream(
@@ -211,9 +199,7 @@ async def test_process_stream_returns_error_for_empty_transcription() -> None:
 async def test_process_stream_returns_error_for_groq_failure() -> None:
     """Test non-auth Groq transcription failures become STT errors."""
     client = MagicMock()
-    client.audio.transcriptions.create = AsyncMock(
-        side_effect=openai.OpenAIError("boom")
-    )
+    client.async_transcribe_audio = AsyncMock(side_effect=GroqApiError("boom"))
     entity = _entity(client)
 
     result = await entity.async_process_audio_stream(
@@ -230,12 +216,8 @@ async def test_process_stream_starts_reauth_for_authentication_error(
 ) -> None:
     """Test authentication failures start reauth and return an STT error."""
     client = MagicMock()
-    client.audio.transcriptions.create = AsyncMock(
-        side_effect=openai.AuthenticationError(
-            "Invalid API key",
-            response=_openai_response(HTTPStatus.UNAUTHORIZED),
-            body=None,
-        )
+    client.async_transcribe_audio = AsyncMock(
+        side_effect=GroqAuthenticationError("Invalid API key")
     )
     entity = _entity(client)
     entity.hass = hass

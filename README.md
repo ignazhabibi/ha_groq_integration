@@ -1,7 +1,7 @@
 # Groq Cloud Conversation
 
 Custom Home Assistant integration for using the Groq Cloud API as a conversation
-agent, AI task provider, and speech-to-text provider.
+agent, AI task provider, speech-to-text provider, and text-to-speech provider.
 
 The integration follows Home Assistant's LLM API patterns and uses Groq's
 OpenAI-compatible API endpoint.
@@ -10,7 +10,11 @@ OpenAI-compatible API endpoint.
 
 - Conversation agent for Home Assistant Assist.
 - AI task entity for text and structured data generation.
+- Vision support for AI tasks with image attachments.
 - Speech-to-text entity for Groq Whisper transcription.
+- Text-to-speech entity for Groq Orpheus WAV speech generation.
+- `groq_cloud_conversation.generate_text` action for direct text generation
+  from scripts and automations.
 - Home Assistant LLM tool support through the Assist API.
 - Groq Cloud access through the OpenAI-compatible API endpoint.
 - Streaming response handling for conversation output and tool calls.
@@ -54,6 +58,7 @@ The initial setup creates:
 - one conversation subentry for Home Assistant Assist,
 - one AI task subentry for text and structured data generation,
 - one speech-to-text subentry for Assist pipeline transcription.
+- one text-to-speech subentry for generated speech audio.
 
 All subentries can be reconfigured from the integration options.
 
@@ -74,6 +79,9 @@ AI task model options are limited to Groq models with `json_schema` Structured
 Outputs support. If an older AI task subentry has no compatible model stored,
 structured tasks fall back to `openai/gpt-oss-20b`.
 
+AI tasks with image attachments use the configured vision model. The default
+vision model is `meta-llama/llama-4-scout-17b-16e-instruct`.
+
 The default speech-to-text model is:
 
 ```text
@@ -82,6 +90,15 @@ whisper-large-v3-turbo
 
 The speech-to-text subentry also supports `whisper-large-v3` from its advanced
 options.
+
+The default text-to-speech model is:
+
+```text
+canopylabs/orpheus-v1-english
+```
+
+The text-to-speech subentry can also be configured for
+`canopylabs/orpheus-arabic-saudi`.
 
 ## Conversation Agent
 
@@ -97,13 +114,27 @@ subentry options.
 
 The AI task entity supports regular text generation and structured data
 generation. Structured tasks use Home Assistant's schema information and return
-parsed JSON data.
+parsed JSON data. If a task includes image attachments, the integration sends
+the images to a Groq vision-capable Chat Completions model.
+
+## Actions
+
+The integration provides a `groq_cloud_conversation.generate_text` action for
+scripts and automations that need a direct Groq Chat Completions response. The
+action returns response data with the generated `text`, selected `model`,
+`finish_reason`, and Groq token `usage` when provided by the API.
 
 ## Speech-to-Text
 
 The speech-to-text entity can be selected as an Assist pipeline STT provider.
 It sends Home Assistant audio streams to Groq's OpenAI-compatible transcription
 endpoint and returns the transcribed text to Assist.
+
+## Text-to-Speech
+
+The text-to-speech entity can be selected anywhere Home Assistant accepts a TTS
+engine. It sends text to Groq's OpenAI-compatible speech endpoint and returns
+WAV audio. Groq Orpheus currently limits input text to 200 characters.
 
 ## Development
 

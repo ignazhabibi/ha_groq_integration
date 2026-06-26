@@ -3,7 +3,7 @@
 from collections.abc import AsyncIterator, Mapping
 from types import MappingProxyType
 from typing import TypeVar, cast
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import MagicMock
 
 import pytest
 from homeassistant.components import conversation
@@ -11,8 +11,6 @@ from homeassistant.config_entries import ConfigSubentry
 from homeassistant.const import CONF_API_KEY, CONF_LLM_HASS_API, CONF_PROMPT
 from homeassistant.core import Context, HomeAssistant
 from homeassistant.helpers import intent, llm
-from openai.types.chat import ChatCompletionChunk
-from openai.types.chat.chat_completion_chunk import Choice, ChoiceDelta
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 from custom_components.groq_cloud_conversation import GroqCloudConfigEntry
@@ -24,6 +22,8 @@ from custom_components.groq_cloud_conversation.const import (
 from custom_components.groq_cloud_conversation.conversation import (
     GroqCloudConversationEntity,
 )
+from custom_components.groq_cloud_conversation.model_registry import GroqModelRegistry
+from custom_components.groq_cloud_conversation.runtime import GroqCloudRuntimeData
 
 type ConversationOptionValue = bool | list[str] | str
 StreamEventT = TypeVar("StreamEventT")
@@ -48,25 +48,24 @@ class FakeStream[StreamEventT]:
             raise StopAsyncIteration from err
 
 
-def _chat_message_chunks(text: str) -> list[ChatCompletionChunk]:
+def _chat_message_chunks(text: str) -> list[dict[str, object]]:
     """Return fake Chat Completions chunks for an assistant text response."""
     return [
-        ChatCompletionChunk.model_construct(
-            id="chatcmpl_1",
-            choices=[
-                Choice.model_construct(
-                    delta=ChoiceDelta.model_construct(
-                        content=text,
-                        role="assistant",
-                    ),
-                    finish_reason="stop",
-                    index=0,
-                )
+        {
+            "choices": [
+                {
+                    "delta": {
+                        "content": text,
+                        "role": "assistant",
+                    },
+                    "finish_reason": "stop",
+                    "index": 0,
+                }
             ],
-            created=0,
-            model=RECOMMENDED_CHAT_MODEL,
-            object="chat.completion.chunk",
-        )
+            "id": "chatcmpl_1",
+            "model": RECOMMENDED_CHAT_MODEL,
+            "object": "chat.completion.chunk",
+        }
     ]
 
 
@@ -79,7 +78,10 @@ def _make_entity(
         data={CONF_API_KEY: "groq-key"},
         title="Groq Cloud",
     )
-    entry.runtime_data = MagicMock()
+    entry.runtime_data = GroqCloudRuntimeData(
+        client=MagicMock(),
+        model_registry=GroqModelRegistry(),
+    )
     options = RECOMMENDED_CONVERSATION_OPTIONS.copy()
     if data:
         options.update(data)
@@ -149,8 +151,8 @@ async def test_handle_message_returns_successful_conversation_result(
 ) -> None:
     """Test a successful conversation run returns the streamed assistant speech."""
     entity = _make_entity()
-    client = cast("MagicMock", entity.entry.runtime_data)
-    client.chat.completions.create = AsyncMock(
+    client = cast("MagicMock", entity.entry.runtime_data.client)
+    client.async_stream_chat_completion = MagicMock(
         return_value=FakeStream(_chat_message_chunks("The lights are on."))
     )
     user_input = conversation.ConversationInput(
@@ -194,8 +196,8 @@ async def test_handle_message_returns_successful_conversation_result(
 
     assert result.conversation_id == "conversation-id"
     assert result.response.speech["plain"]["speech"] == "The lights are on."
-    client.chat.completions.create.assert_awaited_once()
-    request = client.chat.completions.create.call_args.kwargs
+    client.async_stream_chat_completion.assert_called_once()
+    request = client.async_stream_chat_completion.call_args.args[0]
     assert request["stream"] is True
     assert any(
         message["role"] == "user" and message["content"] == "Turn on the lights"

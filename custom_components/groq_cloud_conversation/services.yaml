@@ -1,0 +1,59 @@
+generate_text:
+  name: Generate text
+  description: Generate a text response with Groq Chat Completions.
+  fields:
+    config_entry_id:
+      name: Config entry
+      description: Groq Cloud config entry to use. Required only when multiple entries are loaded.
+      required: false
+      selector:
+        config_entry:
+          integration: groq_cloud_conversation
+    prompt:
+      name: Prompt
+      description: User prompt to send to Groq.
+      required: true
+      selector:
+        text:
+          multiline: true
+    system_prompt:
+      name: System prompt
+      description: Optional system instruction to apply before the user prompt.
+      required: false
+      selector:
+        text:
+          multiline: true
+    model:
+      name: Model
+      description: Optional Groq Chat Completions model. Defaults to the configured conversation model.
+      required: false
+      selector:
+        text:
+    max_tokens:
+      name: Maximum tokens
+      description: Maximum completion tokens to request.
+      required: false
+      selector:
+        number:
+          min: 1
+          mode: box
+    temperature:
+      name: Temperature
+      description: Sampling temperature.
+      required: false
+      selector:
+        number:
+          min: 0
+          max: 2
+          step: 0.05
+          mode: box
+    top_p:
+      name: Top P
+      description: Nucleus sampling value.
+      required: false
+      selector:
+        number:
+          min: 0
+          max: 1
+          step: 0.05
+          mode: box
