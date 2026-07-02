@@ -57,7 +57,7 @@ The initial setup creates:
 
 - one conversation subentry for Home Assistant Assist,
 - one AI task subentry for text and structured data generation,
-- one speech-to-text subentry for Assist pipeline transcription.
+- one speech-to-text subentry for Assist pipeline transcription,
 - one text-to-speech subentry for generated speech audio.
 
 All subentries can be reconfigured from the integration options.

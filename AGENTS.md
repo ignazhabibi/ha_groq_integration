@@ -1,129 +1,86 @@
 # AGENTS.md
 
-## Project Scope
+This is the only agent instruction file for this repository. Do not add separate `.agent/` rule or workflow files.
 
-This repository contains the `groq_cloud_conversation` custom integration for Home Assistant. Its purpose is to expose Groq Cloud through the OpenAI-compatible API as:
+## Scope
 
-- a Home Assistant Assist conversation agent,
-- an AI task entity for text and structured data generation,
-- a speech-to-text entity for Groq Whisper transcription,
-- an adapter between Home Assistant's LLM/STT APIs and Groq's OpenAI-compatible API.
+This repository contains the `groq_cloud_conversation` Home Assistant custom integration. It exposes Groq Cloud as:
 
-Use Home Assistant's official LLM API docs as the behavioral contract. The official `openai_conversation` integration remains a useful lifecycle and Home Assistant integration reference, but Groq request/response transport should follow Groq's Chat Completions and tool-calling documentation:
+- an Assist conversation agent,
+- an AI task entity for text, structured data, and vision attachments,
+- speech-to-text and text-to-speech entities,
+- the `groq_cloud_conversation.generate_text` action,
+- an adapter between Home Assistant's LLM/STT/TTS APIs and Groq's OpenAI-compatible API.
 
-- https://github.com/home-assistant/core/tree/dev/homeassistant/components/openai_conversation
-- https://developers.home-assistant.io/docs/core/llm/
-- https://console.groq.com/docs/tool-use/local-tool-calling
-- https://console.groq.com/docs/structured-outputs
+Important paths:
 
-## Repository Layout
+- `custom_components/groq_cloud_conversation/`: integration code.
+- `tests/`: pytest coverage with `pytest-homeassistant-custom-component`.
+- `.github/workflows/`: CI, stable release, and prerelease workflows.
+- `README.md`, `hacs.json`, `pyproject.toml`, and `custom_components/groq_cloud_conversation/manifest.json`: user-facing and packaging metadata.
 
-- `custom_components/groq_cloud_conversation/`: Home Assistant integration code.
-- `tests/`: pytest tests using `pytest-homeassistant-custom-component`.
-- `.github/workflows/`: CI, stable release, and prerelease pipelines.
-- `.agent/rules/`: repository-specific process and tech-stack rules for agents.
-- `.agent/workflows/`: PR submission and release playbooks.
-- `pyproject.toml`: dependency, Ruff, pytest, and strict mypy configuration.
-- `hacs.json`: HACS metadata.
-- `README.md`: user-facing project overview.
+## Commands
 
-## Local Commands
-
-Prefer Python 3.14, matching `pyproject.toml`.
+Use Python 3.14.
 
 ```bash
-python3.14 -m venv .venv
 .venv/bin/python -m pip install -e '.[dev]'
 .venv/bin/python -m pytest
 .venv/bin/python -m ruff check .
 .venv/bin/python -m ruff format --check .
-.venv/bin/python -m ruff format .
 .venv/bin/python -m mypy
+.venv/bin/python -m pip install -e . --dry-run
 ```
 
-When changing only documentation, running the test suite is optional. For code changes, run the narrowest relevant tests first, then broaden to `pytest`, `ruff check`, and `mypy` when behavior, typing, or shared adapters are affected.
+For code changes, run focused tests first, then broaden to `pytest`, `ruff check`, and `mypy` when behavior, typing, or shared adapters are affected. Documentation-only changes do not require the full test suite. Run the dry-run install after packaging or metadata changes.
 
-## CI and Release Process
+## Workflow
 
-- GitHub Actions are defined in `.github/workflows/release.yml` and `.github/workflows/pre-release.yml`.
-- Pull requests and `main` pushes run `ruff check`, `ruff format --check`, `mypy`, and `pytest`.
-- Stable tags `vX.Y.Z` publish a GitHub release.
-- Prerelease tags `vX.Y.Z-alpha.N`, `vX.Y.Z-beta.N`, and `vX.Y.Z-rc.N` publish a GitHub prerelease.
-- HACS installs from the standard repository layout under `custom_components/groq_cloud_conversation/`; do not add `zip_release` or release-asset filename requirements unless explicitly changing the distribution model.
-- Keep release versions aligned in both `custom_components/groq_cloud_conversation/manifest.json` and `pyproject.toml`.
-- Use `.agent/workflows/pr-submit.md` for PR preparation and `.agent/workflows/release.md` for versioning, changelog, and tag work.
+- Do not commit directly to `main` unless the user explicitly asks for it.
+- Prefer short-lived branches and PRs for normal work.
+- Pull requests and `main` pushes run Ruff, mypy, and pytest.
+- Stable tags `vX.Y.Z` publish a GitHub release; prerelease tags `vX.Y.Z-alpha.N`, `vX.Y.Z-beta.N`, and `vX.Y.Z-rc.N` publish prereleases.
 - Do not create release branches, bump versions, tag, push release refs, or claim a release is live without explicit user confirmation.
+- Keep release versions aligned in `manifest.json` and `pyproject.toml`.
+- HACS uses the standard repository layout under `custom_components/groq_cloud_conversation/`; do not add `zip_release` or release-asset filename requirements unless explicitly changing the distribution model.
 
-## Home Assistant Integration Rules
+## Integration Rules
 
 - Follow Home Assistant's config-entry-only pattern. Do not add YAML configuration paths.
-- Keep the integration domain as `groq_cloud_conversation`.
-- Keep Home Assistant objects and async lifecycle methods idiomatic: `async_setup_entry`, `async_unload_entry`, update listeners, platform forwarding, and config subentries.
-- Use Home Assistant's shared async HTTP client via `homeassistant.helpers.httpx_client.get_async_client(hass)` for API clients.
-- Map external API failures into Home Assistant-native errors:
-  - setup authentication failures -> `ConfigEntryAuthFailed`,
-  - setup transient API failures -> `ConfigEntryNotReady`,
-  - runtime user-facing failures -> `HomeAssistantError`,
-  - config-flow form errors -> `cannot_connect`, `invalid_auth`, or `unknown`.
-- Keep translations and UI copy in `strings.json` when user-visible.
-- Preserve subentry support for `conversation`, `ai_task_data`, and `stt` unless a task explicitly changes that surface.
+- Keep the domain `groq_cloud_conversation`.
+- Preserve the `conversation`, `ai_task_data`, `stt`, and `tts` subentry surfaces unless a task explicitly changes them.
+- Use Home Assistant's shared async HTTP client via `homeassistant.helpers.httpx_client.get_async_client(hass)`.
+- Keep Groq transport in `api.py` on the local async `httpx`-based `GroqApiClient`; do not reintroduce the OpenAI SDK unless that dependency is deliberately added back.
+- Map setup auth failures to `ConfigEntryAuthFailed`, setup transient failures to `ConfigEntryNotReady`, runtime user-facing failures to `HomeAssistantError`, and config-flow errors to `cannot_connect`, `invalid_auth`, or `unknown`.
+- Keep user-visible UI copy in `strings.json` and translations.
+- Keep model defaults in `const.py` and model capability routing in `model_registry.py`.
+- Keep diagnostics redacting API keys, prompts, and system prompts.
 
-## LLM and Groq Rules
+## Groq and HA Behavior
 
-- Treat Home Assistant's LLM API docs as the contract. Conversation entities should call `chat_log.async_provide_llm_data(...)` with:
-  - `user_input.as_llm_context(DOMAIN)`,
-  - selected `CONF_LLM_HASS_API` values,
-  - configured `CONF_PROMPT`,
-  - `user_input.extra_system_prompt`.
-- Pass Home Assistant LLM tools to Groq in the OpenAI-compatible Chat Completions `tools` shape.
-- Keep conversation and tool-call handling streaming-aware. Preserve `chat_log.async_add_delta_content_stream(...)` and convert assistant/tool result content back into Chat Completions messages for follow-up iterations.
-- Use non-streaming Chat Completions with `response_format: json_schema` for structured AI task output.
-- Do not broaden control behavior in code or prompts. If an Assist bug involves wrong entities or room targets, inspect trace/config/history/exposure evidence before assuming the model or STT is at fault.
-- Preserve structured-output behavior for AI tasks. If `task.structure` is set, return parsed JSON data or raise a clear `HomeAssistantError`.
-- Keep model defaults centralized in `const.py`.
+- Home Assistant's LLM API is the behavioral contract. Use the official `openai_conversation` integration as a lifecycle reference, but keep Groq transport aligned with Groq Chat Completions, audio endpoints, tool-calling, and structured outputs.
+- Conversation entities must call `chat_log.async_provide_llm_data(...)` with `user_input.as_llm_context(DOMAIN)`, selected `CONF_LLM_HASS_API`, configured `CONF_PROMPT`, and `user_input.extra_system_prompt`.
+- Pass Home Assistant LLM tools to Groq in the Chat Completions `tools` shape.
+- Preserve streaming conversation handling with `chat_log.async_add_delta_content_stream(...)` and follow-up tool iterations.
+- Use non-streaming Chat Completions with `response_format: json_schema` for structured AI tasks.
+- Route AI task image attachments to a vision-capable model; structured output with image attachments is intentionally unsupported.
+- STT uses `/audio/transcriptions`; TTS uses `/audio/speech`.
+- Do not broaden smart-home control behavior in code or prompts. For Assist entity or room mistakes, inspect traces, config, history, and exposure evidence first.
 
-## Python Style
+## Code and Tests
 
-These conventions are adapted from the linked project rules and apply to all Python files in this repository.
+- Every Python file starts with a purpose docstring; public classes and methods need concise Google-style docstrings.
+- Use lazy logger interpolation. Do not use f-strings in logger calls.
+- Prefer precise types and built-in generics. Avoid `Any` where a reasonable precise type exists. Do not annotate `self`.
+- Catch specific exceptions.
+- Use `pytest` only. Do not introduce `unittest.TestCase`.
+- Mock Groq API clients at the integration boundary. Do not make live Groq API calls in tests.
+- Use realistic Home Assistant objects where practical, especially for conversation, LLM tools, config subentries, STT metadata, services, and diagnostics.
+- Add or update focused regression tests for changes to streaming, tool calls, structured outputs, vision attachments, reauth, services, diagnostics, STT, TTS, model routing, or config subentries.
 
-- Every Python file starts with a purpose docstring.
-- Public classes and methods need concise Google-style docstrings.
-- Docstrings should explain the "what" and "why"; do not repeat types already present in signatures.
-- Use f-strings for normal interpolation.
-- Never use f-strings in logger calls. Use lazy logger interpolation, for example `_LOGGER.debug("Response: %s", value)`.
-- Logger messages should not end with a period.
-- Keep imports sorted.
-- Prefer descriptive variable names over single-letter names.
-- Use `snake_case` for variables and functions, `UPPER_CASE` for constants, and `_leading_underscore` for internal helpers.
-- Boolean variables should start with `is_`, `has_`, or `should_` when practical.
-- Use built-in generics such as `list[str]` and `dict[str, Any]`.
-- Avoid `Any` where a precise type is reasonable; this codebase runs with strict mypy.
-- Do not annotate `self`.
-- Catch specific exceptions. Do not catch bare `Exception` unless matching an upstream Home Assistant pattern and there is no safer alternative.
-- Comments should be rare, useful, full sentences, capitalized, and end with a period.
+## Final Checks
 
-## Testing Rules
-
-- Use `pytest` only; do not introduce `unittest.TestCase`.
-- Keep test files named `test_*.py` and test functions named `test_*`.
-- Mirror source modules where useful:
-  - `config_flow.py` -> `tests/test_config_flow.py`
-  - `conversation.py` -> `tests/test_conversation.py`
-  - `ai_task.py` -> `tests/test_ai_task.py`
-  - shared adapter behavior -> `tests/test_entity.py`
-- Use `MockConfigEntry` from `pytest_homeassistant_custom_component.common` for integration setup.
-- Mock Groq/OpenAI clients at the integration boundary. Do not make live Groq API calls in tests.
-- Use realistic Home Assistant objects (`conversation.ChatLog`, `llm.APIInstance`, `llm.ToolInput`, config subentries) instead of testing only dict shims.
-- Async tests should work with the configured `asyncio_mode = "auto"`; add explicit markers only if they help readability or compatibility.
-- Prefer Arrange/Act/Assert structure for non-trivial tests. Add section comments only when they make the test easier to scan.
-- For changes to streaming, tool calls, structured outputs, reauth, or config subentries, add or update focused regression tests.
-
-## Review Checklist
-
-Before finishing a code change:
-
-- Confirm the change still matches Home Assistant's current LLM API expectations.
-- Compare conversation-agent lifecycle changes with the official `openai_conversation` integration, while keeping Groq API transport aligned with Groq Chat Completions.
 - Verify no secrets, API keys, or user-specific Home Assistant entity IDs are committed.
-- Run the relevant tests and linters, or state clearly why they were not run.
+- Validate edited JSON files such as `manifest.json`, `strings.json`, and translations with `python -m json.tool`.
+- Run relevant tests and linters, or state clearly why they were not run.
 - For Assist behavior fixes, validate the final Home Assistant conversation result, not only that a Groq request was made.
