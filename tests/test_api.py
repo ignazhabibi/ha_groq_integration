@@ -9,6 +9,7 @@ import pytest
 from custom_components.groq_cloud_conversation.api import (
     GroqApiClient,
     GroqAuthenticationError,
+    GroqConnectionError,
     GroqSpeechRequest,
     GroqTranscriptionRequest,
 )
@@ -67,6 +68,23 @@ async def test_api_client_maps_authentication_errors() -> None:
     client, http_client = _client(handler)
     try:
         with pytest.raises(GroqAuthenticationError, match="bad key"):
+            await client.async_list_models()
+    finally:
+        await http_client.aclose()
+
+
+async def test_api_client_maps_transport_errors() -> None:
+    """Test HTTP transport failures get a typed connection error."""
+
+    async def handler(_request: httpx.Request) -> httpx.Response:
+        """Raise a fake protocol failure."""
+        raise httpx.RemoteProtocolError(
+            "Server disconnected without sending a response."
+        )
+
+    client, http_client = _client(handler)
+    try:
+        with pytest.raises(GroqConnectionError, match="Cannot connect to Groq"):
             await client.async_list_models()
     finally:
         await http_client.aclose()

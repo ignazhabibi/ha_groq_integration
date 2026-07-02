@@ -140,7 +140,7 @@ class GroqApiClient:
                         ) from err
                     if isinstance(chunk, dict):
                         yield chunk
-        except (httpx.TimeoutException, httpx.NetworkError) as err:
+        except httpx.TransportError as err:
             raise GroqConnectionError("Cannot connect to Groq") from err
 
     async def async_transcribe_audio(
@@ -169,7 +169,7 @@ class GroqApiClient:
                 timeout=request_timeout,
             )
             await self._async_raise_for_response(response)
-        except (httpx.TimeoutException, httpx.NetworkError) as err:
+        except httpx.TransportError as err:
             raise GroqConnectionError("Cannot connect to Groq") from err
 
         payload = response.json()
@@ -198,7 +198,7 @@ class GroqApiClient:
                 timeout=request_timeout,
             )
             await self._async_raise_for_response(response)
-        except (httpx.TimeoutException, httpx.NetworkError) as err:
+        except httpx.TransportError as err:
             raise GroqConnectionError("Cannot connect to Groq") from err
 
         return response.content
@@ -221,7 +221,7 @@ class GroqApiClient:
                 timeout=request_timeout,
             )
             await self._async_raise_for_response(response)
-        except (httpx.TimeoutException, httpx.NetworkError) as err:
+        except httpx.TransportError as err:
             raise GroqConnectionError("Cannot connect to Groq") from err
 
         try:

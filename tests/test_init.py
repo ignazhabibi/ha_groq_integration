@@ -17,6 +17,7 @@ from custom_components.groq_cloud_conversation import (
 from custom_components.groq_cloud_conversation.api import (
     GroqApiError,
     GroqAuthenticationError,
+    GroqConnectionError,
 )
 from custom_components.groq_cloud_conversation.const import DOMAIN
 
@@ -62,6 +63,7 @@ async def test_setup_entry_creates_client_and_forwards_platforms(
     ("setup_error", "expected_exception"),
     [
         (GroqAuthenticationError("invalid key"), ConfigEntryAuthFailed),
+        (GroqConnectionError("cannot connect"), ConfigEntryNotReady),
         (GroqApiError("boom"), ConfigEntryNotReady),
     ],
 )
